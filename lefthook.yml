@@ -1,0 +1,65 @@
+# Git hooks configuration with Lefthook
+# Fast, cross-platform Git hooks manager
+
+# Defines hooks that run before a commit is created.
+# `parallel: true` allows commands to run simultaneously for speed.
+pre-commit:
+  parallel: true
+  commands:
+    # Formats code using Biome.
+    # It only runs on staged files with specific extensions.
+    format:
+      glob: '*.{js,ts,json,jsonc}'
+      run: npx @biomejs/biome format --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true # Automatically stages any files fixed by the command.
+
+    # Lints code and applies safe fixes (including organizing imports) using Biome.
+    # The `check --write` command handles linting, fixing, and import sorting.
+    # It runs on staged JS/TS files.
+    lint-and-organize:
+      glob: '*.{js,ts}'
+      run: npx @biomejs/biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true # Automatically stages any files fixed by the command.
+
+# Defines hooks that run before you push to a remote repository.
+pre-push:
+  commands:
+    # Prevents direct pushes to critical branches like main, master, and staging.
+    protect-branches:
+      run: |
+        protected_branch=$(git rev-parse --abbrev-ref HEAD)
+        if [[ "$protected_branch" == "main" || "$protected_branch" == "master" || "$protected_branch" == "staging" ]]; then
+          echo "🚫 Direct pushes to '$protected_branch' are not allowed!"
+          echo "Please create a pull request instead."
+          echo "Switch to 'dev' branch or create a new feature branch."
+          exit 1
+        fi
+
+    # Runs Biome's full check suite on the entire project as a final quality gate.
+    check:
+      run: npx @biomejs/biome check --no-errors-on-unmatched --files-ignore-unknown=true .
+
+    # Runs the type-checking script defined in your package.json (e.g., tsc or svelte-check).
+    type-check:
+      glob: '*.{ts}'
+      run: npm run check
+
+# Defines a hook that runs after you write a commit message, to validate its format.
+commit-msg:
+  commands:
+    commitlint:
+      run: |
+        # Read the first line of the commit message file, passed as {1} by Lefthook.
+        # Using {1} is more reliable than the shell's $1.
+        first_line=$(head -n 1 {1})
+
+        # Regex for Conventional Commits validation.
+        # The `-i` flag is added to grep for case-insensitive matching (e.g., "feat" or "Feat").
+        if ! echo "$first_line" | grep -qiE "^.*(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\([^)]+\))?:\s*.+"; then
+          echo "❌ Invalid commit message format!"
+          echo "Please follow the Conventional Commits specification."
+          echo "Format: type(scope): description"
+          echo "Types: ✨Feat, 🐛Fix, 📚Docs, 💎Style, 🔨Refactor, ⚡️Perf, 🧪Test, 🤖Ci, 📦Build, 🧹Chore, ⏪Revert"
+          echo "Note: Emojis and other prefixes before the type are allowed."
+          exit 1
+        fi

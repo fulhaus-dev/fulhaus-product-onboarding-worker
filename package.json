@@ -1,0 +1,56 @@
+{
+  "name": "fulhaus-product-onboarding-worker",
+  "version": "1.0.0",
+  "description": "Fülhaus product onboarding worker",
+  "type": "module",
+  "main": "dist/worker.js",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/worker.ts",
+    "build": "rimraf dist && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
+    "start": "node dist/worker.js",
+    "prepare": "(test -d .git && lefthook install) || echo 'No git repository, skipping lefthook'",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "lint:fix": "biome check --apply .",
+    "ci": "biome ci .",
+    "hooks:install": "lefthook install",
+    "hooks:uninstall": "lefthook uninstall",
+    "check": "tsc --noEmit",
+    "test": "echo \"Error: no test specified yet\" && exit 0",
+    "ss": "npx tree-cli . -l 3 --ignore=\"node_modules,.git,dist,build,coverage,*.log,*.lock,*.env\" --dirs-first -o processor-structure.md && echo \"Processor structure saved to PROCESSOR.STRUCTURE.md\""
+  },
+  "keywords": [
+    "Fülhaus",
+    "Fulhaus",
+    "product",
+    "onboarding",
+    "worker",
+    "node",
+    "typescript",
+    "script"
+  ],
+  "author": "Uneku Idumajogu",
+  "license": "ISC",
+  "packageManager": "pnpm@10.13.1",
+  "dependencies": {
+    "@datastax/astra-db-ts": "^2.0.2",
+    "dotenv": "^17.2.2",
+    "pino": "^9.10.0",
+    "zod": "^4.1.9"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
+    "@types/node": "^24.5.2",
+    "lefthook": "^1.13.1",
+    "pino-pretty": "^13.1.1",
+    "rimraf": "^6.0.1",
+    "tree-cli": "^0.6.7",
+    "tsc-alias": "^1.8.16",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
