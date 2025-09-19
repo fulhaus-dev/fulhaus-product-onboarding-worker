@@ -54,74 +54,36 @@ export default async function processFlatFileProductDataStream({
 
       fileConfig = data;
 
-      await processProductLinesWorker(fileFieldMapLines, fileConfig, {
+      processProductLinesWorker(fileFieldMapLines, fileConfig, {
         vendorId,
         ownerId,
       });
 
+      totalCount += fileFieldMapLines.length;
+
       fileFieldMapLines = [];
 
-      process.exit(1);
-      //   const { data, errorRecord: extractFileFieldMapErrorRecord } =
-      //     await extractFileFieldMap(currentLines);
-      //   if (extractFileFieldMapErrorRecord) {
-      //     sendErrorMessage(extractFileFieldMapErrorRecord, {
-      //       function: 'extractFileFieldMap',
-      //       extract: currentLines,
-      //     });
-      //     return;
-      //   }
-
-      //   fileConfig = {
-      //     delimiter: data.productDataDelimiter,
-      //     fieldMap: data.productFieldMap,
-      //     headerFields: data.headerLines,
-      //   };
-      //   fileFieldMapLines = [];
-
-      //   totalCount = totalCount + data.mainLines.length;
-
-      //   sendFileDataForProcessing({
-      //     fieldMap: fileConfig.fieldMap,
-      //     headerFields: fileConfig.headerFields,
-      //     mainLines: data.mainLines,
-      //     vendorId,
-      //     ownerId,
-      //     fileName,
-      //   });
-
-      //   continue;
+      continue;
     }
 
     if (!fileConfig) continue;
 
-    // const data = extractFileData(currentLines, fileConfig.delimiter);
+    processProductLinesWorker(lines, fileConfig, {
+      vendorId,
+      ownerId,
+    });
 
-    // totalCount = totalCount + data.length;
-
-    // if (totalCount > 2000) return;
-
-    // sendFileDataForProcessing({
-    //   fieldMap: fileConfig.fieldMap,
-    //   headerFields: fileConfig.headerFields,
-    //   mainLines: data,
-    //   vendorId,
-    //   ownerId,
-    //   fileName,
-    // });
+    totalCount += lines.length;
   }
 
-  //   if (fileConfig) {
-  //     sendFileDataForProcessing({
-  //       fieldMap: fileConfig.fieldMap,
-  //       headerFields: fileConfig.headerFields,
-  //       mainLines: [],
-  //       vendorId,
-  //       ownerId,
-  //       fileName,
-  //       hasMore: false, // Signal completion
-  //     });
-  //   }
+  if (buffer.trim() && fileConfig) {
+    processProductLinesWorker([buffer], fileConfig, {
+      vendorId,
+      ownerId,
+    });
+
+    totalCount += 1;
+  }
 
   logger.info(
     `✅ Completed ${totalCount} lines from ${fileName} for vendor ${vendorId}`

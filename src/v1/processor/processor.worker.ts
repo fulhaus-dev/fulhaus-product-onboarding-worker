@@ -1,5 +1,4 @@
 import { error } from '@worker/utils/error.js';
-import logger from '@worker/utils/logger.js';
 import { FileConfig } from '@worker/v1/processor/processor.type.js';
 import {
   getBaseProductData,
@@ -13,7 +12,33 @@ import {
 import { createProductService } from '@worker/v1/product/product.service.js';
 import { CreateProduct } from '@worker/v1/product/product.type.js';
 
-export default async function processProductLinesWorker(
+const BATCH_SIZE = 20;
+const BATCH_DELAY_MS = 300;
+
+export default function processProductLinesWorker(
+  productDataLines: string[],
+  fileConfig: FileConfig,
+  idArgs: { vendorId: string; ownerId?: string }
+) {
+  const batches = [];
+
+  for (let i = 0; i < productDataLines.length; i += BATCH_SIZE) {
+    batches.push(productDataLines.slice(i, i + BATCH_SIZE));
+  }
+
+  const processBatch = async (batch: string[], delay: number) => {
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    return processProductLines(batch, fileConfig, idArgs);
+  };
+
+  Promise.all(
+    batches.map((batch, index) => processBatch(batch, index * BATCH_DELAY_MS))
+  );
+}
+
+async function processProductLines(
   productDataLines: string[],
   fileConfig: FileConfig,
   idArgs: { vendorId: string; ownerId?: string }
@@ -32,26 +57,6 @@ export default async function processProductLinesWorker(
     getProductWeightData(productDataLines, fileConfig),
   ]);
 
-  //   const productImageData = await getProductImageData(
-  //     productDataLines,
-  //     fileConfig
-  //   );
-
-  //   const productIsoCodeData = await getProductIsoCodeData(
-  //     productDataLines,
-  //     fileConfig
-  //   );
-
-  //   const productDimensionData = await getProductDimensionData(
-  //     productDataLines,
-  //     fileConfig
-  //   );
-
-  //   const productWeightData = await getProductWeightData(
-  //     productDataLines,
-  //     fileConfig
-  //   );
-
   const [productStyleData, productDescriptionAndCategoryData] =
     await Promise.all([
       getProductStyleData(productDataLines, fileConfig, productImageData),
@@ -62,19 +67,6 @@ export default async function processProductLinesWorker(
         baseProductData
       ),
     ]);
-
-  //   const productStyleData = await getProductStyleData(
-  //     productDataLines,
-  //     fileConfig,
-  //     productImageData
-  //   );
-
-  //   const productOptimizedTextData = await getProductOptimizedTextData(
-  //     productDataLines,
-  //     fileConfig,
-  //     productImageData,
-  //     baseProductData
-  //   );
 
   const productsToCreate: CreateProduct[] = baseProductData.map(
     (product, index) => ({
@@ -109,6 +101,4 @@ export default async function processProductLinesWorker(
         ],
       });
   });
-
-  console.log('Done!');
 }

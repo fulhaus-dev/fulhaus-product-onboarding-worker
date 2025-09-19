@@ -3,7 +3,7 @@ import { asyncTryCatch } from '@worker/utils/try-catch.js';
 import axios from 'axios';
 
 export async function getLudwigImageEmbeddings(imageUrl: string) {
-  const { data, errorRecord } = await asyncTryCatch<{ vector: number[] }>(() =>
+  const { data: response, errorRecord } = await asyncTryCatch(() =>
     axios.post(
       env.LUDWIG_VECTOR_GENERATION_ENDPOINT,
       {
@@ -19,7 +19,7 @@ export async function getLudwigImageEmbeddings(imageUrl: string) {
 
   if (errorRecord) return { errorRecord };
 
-  const embeddings = data.vector;
+  const embeddings = response.data.vector;
 
-  return { data: Array.from(embeddings) };
+  return { data: Array.from(embeddings) as number[] };
 }

@@ -7,6 +7,8 @@ import { CreateProduct, Product } from '@worker/v1/product/product.type.js';
 import { getLudwigImageEmbeddings } from '@worker/v1/product/product.util.js';
 
 export async function createProductService(createProductData: CreateProduct) {
+  console.log('createProductData', createProductData);
+
   const {
     data: vectorNumberArray,
     errorRecord: getLudwigImageEmbeddingsErrorRecord,
@@ -40,6 +42,7 @@ export async function createProductService(createProductData: CreateProduct) {
   const { data: result, errorRecord } = await asyncTryCatch(() =>
     dbProductCollection.insertOne(newProduct)
   );
+
   if (errorRecord) return { errorRecord };
 
   return {

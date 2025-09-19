@@ -4,7 +4,7 @@ import { NON_INDEXED_PRODUCT_FIELDS } from '@worker/v1/product/product.constant.
 import { Product } from '@worker/v1/product/product.type.js';
 
 export const dbProductCollection = await db.createCollection<Product>(
-  'products2',
+  'products',
   {
     defaultId: { type: 'uuidv7' },
     vector: {

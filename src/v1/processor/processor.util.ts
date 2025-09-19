@@ -237,24 +237,30 @@ export async function getProductDimensionData(
         response.dimensionUnit
       );
 
-      const mainDimensionValuesInInchesArray: number[] = [];
+      const mainDimensionValuesInInchesArray: {
+        value: number;
+        label: 'W' | 'H' | 'D';
+      }[] = [];
       if (response.width)
-        mainDimensionValuesInInchesArray.push(
-          mainDimensionValuesInInches.width
-        );
-      if (response.height)
-        mainDimensionValuesInInchesArray.push(
-          mainDimensionValuesInInches.height
-        );
+        mainDimensionValuesInInchesArray.push({
+          value: mainDimensionValuesInInches.width,
+          label: 'W',
+        });
       if (response.depth)
-        mainDimensionValuesInInchesArray.push(
-          mainDimensionValuesInInches.depth
-        );
+        mainDimensionValuesInInchesArray.push({
+          value: mainDimensionValuesInInches.depth,
+          label: 'D',
+        });
+      if (response.height)
+        mainDimensionValuesInInchesArray.push({
+          value: mainDimensionValuesInInches.height,
+          label: 'H',
+        });
 
       const mainDimensionStringFormat =
         mainDimensionValuesInInchesArray.length > 0
           ? mainDimensionValuesInInchesArray
-              .map((value) => `${value}"`)
+              .map((dimension) => `${dimension.value}"${dimension.label}`)
               .join(' x ')
           : null;
 
@@ -269,24 +275,30 @@ export async function getProductDimensionData(
           response.dimensionUnit
         );
 
-      const shippingDimensionValuesInInchesArray: number[] = [];
+      const shippingDimensionValuesInInchesArray: {
+        value: number;
+        label: 'W' | 'H' | 'D';
+      }[] = [];
       if (shippingDimensionValuesInInches.width !== 0)
-        shippingDimensionValuesInInchesArray.push(
-          shippingDimensionValuesInInches.width
-        );
-      if (shippingDimensionValuesInInches.height !== 0)
-        shippingDimensionValuesInInchesArray.push(
-          shippingDimensionValuesInInches.height
-        );
+        shippingDimensionValuesInInchesArray.push({
+          value: shippingDimensionValuesInInches.width,
+          label: 'W',
+        });
       if (shippingDimensionValuesInInches.depth !== 0)
-        shippingDimensionValuesInInchesArray.push(
-          shippingDimensionValuesInInches.depth
-        );
+        shippingDimensionValuesInInchesArray.push({
+          value: shippingDimensionValuesInInches.depth,
+          label: 'D',
+        });
+      if (shippingDimensionValuesInInches.height !== 0)
+        shippingDimensionValuesInInchesArray.push({
+          value: shippingDimensionValuesInInches.height,
+          label: 'H',
+        });
 
       const shippingDimensionStringFormat =
         shippingDimensionValuesInInchesArray.length > 0
           ? shippingDimensionValuesInInchesArray
-              .map((value) => `${value}"`)
+              .map((dimension) => `${dimension.value}"${dimension.label}`)
               .join(' x ')
           : null;
 
