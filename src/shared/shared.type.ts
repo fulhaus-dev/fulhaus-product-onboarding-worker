@@ -1,6 +1,5 @@
 import { ISO_3166 } from '@worker/shared/shared.iso-codes/iso.3166.js';
 import { ISO_4217 } from '@worker/shared/shared.iso-codes/iso.4217.js';
-import type z from 'zod';
 
 export type ErrorDetails = Record<string, unknown>[];
 

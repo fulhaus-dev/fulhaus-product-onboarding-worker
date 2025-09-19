@@ -1,4 +1,5 @@
 import { ProcessorErrorRecord } from '@worker/shared/shared.type.js';
+import logger from '@worker/utils/logger.js';
 import z from 'zod';
 
 function zodErrorMessage(zodError: z.ZodError) {
@@ -18,7 +19,7 @@ function exceptionErrorRecord(error: unknown) {
 
 function sendErrorMessage(errorRecord: ProcessorErrorRecord) {
   // TODO Handle Slack Error
-  console.error(errorRecord);
+  console.error(JSON.stringify(errorRecord, null, 2));
 }
 
 export const error = {

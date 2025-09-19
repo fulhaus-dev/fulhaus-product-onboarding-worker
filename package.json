@@ -37,14 +37,21 @@
   "license": "ISC",
   "packageManager": "pnpm@10.13.1",
   "dependencies": {
+    "@ai-sdk/google": "^2.0.14",
+    "@aws-sdk/client-s3": "^3.891.0",
     "@datastax/astra-db-ts": "^2.0.2",
+    "ai": "^5.0.46",
+    "axios": "^1.12.2",
     "dotenv": "^17.2.2",
     "pino": "^9.10.0",
+    "unzipper": "^0.12.3",
+    "uuid": "^13.0.0",
     "zod": "^4.1.9"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",
     "@types/node": "^24.5.2",
+    "@types/unzipper": "^0.10.11",
     "lefthook": "^1.13.1",
     "pino-pretty": "^13.1.1",
     "rimraf": "^6.0.1",
