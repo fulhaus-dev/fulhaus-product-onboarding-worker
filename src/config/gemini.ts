@@ -14,3 +14,7 @@ export const googleGemini2_5FlashLlm =
 
 export const googleGemini2_5ProLlm =
   googleGemini.languageModel('gemini-2.5-pro');
+
+export const googleGemini2_5FlashImagePreviewImm = googleGemini(
+  'gemini-2.5-flash-image-preview'
+);

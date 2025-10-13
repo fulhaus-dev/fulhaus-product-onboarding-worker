@@ -3,18 +3,30 @@ import { asyncTryCatch } from '@worker/utils/try-catch.js';
 import { generateObject, ImagePart } from 'ai';
 import z from 'zod';
 
-const systemPrompt = `
-You are an expert product image analyst. Your SOLE task is to identify and return the URL of the *Primary/Main* product image from a provided list.
+const systemPrompt = `You are a product image classifier specialized in e-commerce. Your task is to identify the main product image from a set of images.
 
-**ABSOLUTE RULES (Mandatory Pre-conditions):**
-1.  **Clear/Solid Background ONLY:** The main image MUST have a plain, solid, or clear white/light background.
-2.  **NO Lifestyle/Context:** The main image absolutely CANNOT contain people, scenery, props, text, logos, or any 'lifestyle' elements or 'noise'.
-3.  **Full, Frontal View:** The image MUST show the *entire* product from a primary, direct, frontal angle (NOT a side, back, or partial view).
-4.  **Single Product:** The image MUST only feature the single product being sold.
+MAIN PRODUCT IMAGE CRITERIA:
+- Clean, solid background (white, light gray, or neutral color)
+- Shows the ENTIRE product with no parts cut off
+- Product is centered and clearly visible
+- No lifestyle context (people, scenes, environments)
+- No artistic angles or creative compositions
+- Straight-on or standard product photography angle
+- No props, decorations, or additional items
+- Professional product photography style
+- For products like curtains, blinds, rugs it must show the entire product
+- For art, the entire artwork
+- For lamps, pendants, sconce, floor lamp, ceiling lamps, chandelier or clocks, the entire product
 
-**Primary Goal:** The ideal main image is the simplest, cleanest representation of the entire product against a plain background.
-
-**Output:** ONLY return the URL of the image that adheres to ALL of the Absolute Rules. If multiple images qualify, choose the one with the most direct, full-product view.
+REJECT these types:
+- Lifestyle images (product in use, with people, in real environments)
+- Partial views or close-ups of product details
+- Angled or artistic shots
+- Images with busy/textured backgrounds
+- Images with multiple products unless they're a set
+- Images with text overlays or graphics
+- Packaging-only images (unless that IS the product)
+- Art frames
 `;
 
 export default async function productMainImageDetectorAi(imageUrls: string[]) {
@@ -27,10 +39,12 @@ export default async function productMainImageDetectorAi(imageUrls: string[]) {
     generateObject({
       model: googleGemini2_5FlashLiteLlm,
       system: systemPrompt,
+      temperature: 0,
       schema: z.object({
-        mainImageImageUrl: z
-          .enum(imageUrls)
-          .describe('The front facing image URL'),
+        mainImageImageIndex: z
+          .enum(imageUrls.map((_, index) => `${index}`))
+          .nullable()
+          .describe('The detected main image index (0-indexed)'),
       }),
       messages: [
         {
@@ -38,7 +52,7 @@ export default async function productMainImageDetectorAi(imageUrls: string[]) {
           content: [
             {
               type: 'text',
-              text: `Analyze the ${imageUrls.length} product images provided below. Based on the **ABSOLUTE RULES** in your system prompt (especially the requirement for a **clear, solid background** and **NO lifestyle elements**), determine the single best primary product image. Your final answer MUST be the URL chosen from the list provided`,
+              text: `Analyze these ${imageUrls.length} product images and identify which one is the main product image according to the criteria.`,
             },
             ...userPromptImagePart,
           ],

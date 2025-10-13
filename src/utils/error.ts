@@ -19,7 +19,7 @@ function exceptionErrorRecord(error: unknown) {
 
 function sendErrorMessage(errorRecord: ProcessorErrorRecord) {
   // TODO Handle Slack Error
-  console.error(JSON.stringify(errorRecord, null, 2));
+  // console.error(JSON.stringify(errorRecord, null, 2));
 }
 
 export const error = {

@@ -1,11 +1,19 @@
-import { DbUuidString } from '@worker/config/db/db.type.js';
 import r2 from '@worker/utils/r2.js';
 import processFlatFileProductDataStream from '@worker/v1/processor/processor.file.stream/processor.file.stream.flat-file.js';
 import processSpreadsheetFileProductDataStream from '@worker/v1/processor/processor.file.stream/processor.file.stream.spreadsheet-file.js';
 import processZipFileProductDataStream from '@worker/v1/processor/processor.file.stream/processor.file.stream.zip-file.js';
 import { getVendorProductDataFileKeysThatCanBeProcessed } from '@worker/v1/processor/processor.util.js';
+import { type GenericId as Id } from 'convex/values';
 
-const vendorId = '0198480a-b728-7365-9c9a-617f46037536' as DbUuidString;
+const allowedFiles = [
+  // 'wayfair/Fulhaus_AM.txt.zip',
+  // 'wayfair/Fulhaus_BL.txt.zip',
+  // 'wayfair/Fulhaus_JM.txt.zip',
+  // 'wayfair/Fulhaus_PG.txt.zip',
+  'wayfair/Fulhaus_WFCA.txt.zip',
+];
+
+const vendorId = 'm9766yye02p7d4v26rvtjbs01s7r7y3a' as Id<'productVendors'>;
 
 export async function processVendorProductDataService(
   vendorProductDataR2FolderName: string
@@ -45,6 +53,8 @@ export async function processVendorProductDataService(
   }
 
   for (const zipFileKey of zipFileKeys) {
+    if (!allowedFiles.includes(zipFileKey)) continue;
+
     const { data: zipFileStream } = await r2.getProductDataFileStream(
       zipFileKey
     );

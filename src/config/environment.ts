@@ -37,6 +37,10 @@ const envSchema = z.object({
   LUDWIG_VECTOR_GENERATION_ENDPOINT: z.url(),
   PRODUCT_RERANK_PROVIDER: z.string(),
   PRODUCT_RERANK_MODEL_NAME: z.string(),
+  REPLICATE_API_TOKEN: z.string(),
+  CONVEX_DEPLOYMENT: z.string(),
+  CONVEX_URL: z.string(),
+  CONVEX_PRODUCT_ONBOARDING_API_KEY: z.string(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
