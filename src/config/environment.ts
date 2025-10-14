@@ -40,6 +40,7 @@ const envSchema = z.object({
   MAX_PROCESSING_BATCH: z.coerce.number(),
   MAX_PROCESSING_QUEUE_SIZE: z.coerce.number(),
   MAX_CATEGORIES: z.coerce.number(),
+  PROCESSOR_QUEUE_CHECK_WAIT_INTERVAL: z.coerce.number(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
