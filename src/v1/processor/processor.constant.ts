@@ -14,3 +14,13 @@ export const ZIP_FILE_EXTS_TO_PROCESS = [
   '.gz',
   '.bz2',
 ] as const;
+
+export const productDataDimensionUnits = [
+  'in',
+  'cm',
+  'ft',
+  'm',
+  'yd',
+  'mm',
+] as const;
+export const productDataWeightUnits = ['lb', 'kg', 'g', 'oz', 'mg'] as const;

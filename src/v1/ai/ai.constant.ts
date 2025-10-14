@@ -65,12 +65,6 @@ export const AI_PRODUCT_DATA_MAP_GENERATOR_FIELD_NAMES = [
       'The vendor field that represents the manufacturer suggested retail price or list price',
   },
   {
-    value: 'retailPrice',
-    required: false,
-    description:
-      'The vendor field that represents the standard retail selling price',
-  },
-  {
     value: 'shippingPrice',
     required: false,
     description:

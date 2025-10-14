@@ -1,12 +1,12 @@
-import { googleGemini2_5FlashLiteLlm } from '@worker/config/gemini.js';
+import { googleGemini2_5FlashLite } from '@worker/config/gemini.js';
 import { asyncTryCatch } from '@worker/utils/try-catch.js';
 import { generateObject, ImagePart } from 'ai';
 import z from 'zod';
 
-const systemPrompt = `You are a product image classifier specialized in e-commerce. Your task is to identify the main product image from a set of images.
+const systemPrompt = `You are a product image classifier specialized in furniture images. Your task is to identify the main furniture image with white solid background from a set of images.
 
 MAIN PRODUCT IMAGE CRITERIA:
-- Clean, solid background (white, light gray, or neutral color)
+- Clean, white solid background
 - Shows the ENTIRE product with no parts cut off
 - Product is centered and clearly visible
 - No lifestyle context (people, scenes, environments)
@@ -37,7 +37,7 @@ export default async function productMainImageDetectorAi(imageUrls: string[]) {
 
   const { data, errorRecord } = await asyncTryCatch(() =>
     generateObject({
-      model: googleGemini2_5FlashLiteLlm,
+      model: googleGemini2_5FlashLite,
       system: systemPrompt,
       temperature: 0,
       schema: z.object({
@@ -45,6 +45,9 @@ export default async function productMainImageDetectorAi(imageUrls: string[]) {
           .enum(imageUrls.map((_, index) => `${index}`))
           .nullable()
           .describe('The detected main image index (0-indexed)'),
+        hasWhiteBackground: z
+          .boolean()
+          .describe('Whether the detected main image has a white background'),
       }),
       messages: [
         {

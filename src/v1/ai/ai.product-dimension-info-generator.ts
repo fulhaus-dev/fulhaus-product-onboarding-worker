@@ -1,6 +1,6 @@
-import { googleGemini2_5FlashLiteLlm } from '@worker/config/gemini.js';
+import { googleGemini2_5FlashLite } from '@worker/config/gemini.js';
 import { asyncTryCatch } from '@worker/utils/try-catch.js';
-import { DimensionUnits } from '@worker/v1/product/product.constant.js';
+import { productDataDimensionUnits } from '@worker/v1/processor/processor.constant.js';
 import { generateObject } from 'ai';
 import z from 'zod';
 
@@ -33,20 +33,20 @@ const outputSchema = z.object({
     .number()
     .nullable()
     .describe('The equivalent shipping depth of the product if available'),
-  dimensionUnit: z.enum(DimensionUnits),
+  dimensionUnit: z.enum(productDataDimensionUnits),
 });
 
 const systemPrompt = `
 You are an expert in analyzing product data and returning the equivalent dimension values and dimension unit. Your SOLE task is to identify and return the dimension values and dimension unit.
 `;
 
-export default async function productDimensionValuesGeneratorAi(args: {
+export default async function productDimensionInfoGeneratorAi(args: {
   headerLine: string;
   productDataLine: string;
 }) {
   const { data, errorRecord } = await asyncTryCatch(() =>
     generateObject({
-      model: googleGemini2_5FlashLiteLlm,
+      model: googleGemini2_5FlashLite,
       system: systemPrompt,
       schema: outputSchema,
       prompt: `Provide the dimension values dimension unit for this product data:

@@ -1,4 +1,7 @@
-import { DimensionUnit, WeightUnit } from '@worker/v1/product/product.type.js';
+import {
+  ProductDataDimensionUnit,
+  ProductDataWeightUnit,
+} from '@worker/v1/processor/processor.type.js';
 
 function convertDimensionsToInches(
   values: {
@@ -6,7 +9,7 @@ function convertDimensionsToInches(
     height: number | null;
     depth: number | null;
   },
-  fromUnit: DimensionUnit = 'in'
+  fromUnit: ProductDataDimensionUnit = 'in'
 ) {
   const conversionFactors = {
     in: 1,
@@ -27,7 +30,10 @@ function convertDimensionsToInches(
   };
 }
 
-function convertWeightToLbs(value: number | null, fromUnit: WeightUnit = 'lb') {
+function convertWeightToLbs(
+  value: number | null,
+  fromUnit: ProductDataWeightUnit = 'lb'
+) {
   const conversionFactors = {
     lb: 1,
     kg: 2.20462,

@@ -1,26 +1,26 @@
-// import conversion from '@worker/utils/conversion.js';
-// import productDimensionValuesGeneratorAi from '@worker/v1/ai/ai.product-dimension-values-generator.js';
-// import productIsoValuesGeneratorAi from '@worker/v1/ai/ai.product-iso-values-generator.js';
-// import productMainImageDetectorAi from '@worker/v1/ai/ai.product-main-image-detector.js';
-// import productStyleGeneratorAi from '@worker/v1/ai/ai.product-style-generator.js';
-// import productDescriptorAndCategorizerAi from '@worker/v1/ai/ai.product-descriptor-and-categorizer.js';
-// import productWeightValuesGeneratorAi from '@worker/v1/ai/ai.product-weight-value-generator.js';
+import conversion from '@worker/utils/conversion.js';
+import productDimensionInfoGeneratorAi from '@worker/v1/ai/ai.product-dimension-info-generator.js';
+import { productImageEmbeddingGeneratorAi } from '@worker/v1/ai/ai.product-image-embedding-generator.js';
+import productIsoCodeInfoGeneratorAi from '@worker/v1/ai/ai.product-iso-code-info-generator.js';
+import productMainImageDetectorAi from '@worker/v1/ai/ai.product-main-image-detector.js';
+import productStyleInfoGeneratorAi from '@worker/v1/ai/ai.product-style-info-generator.js';
+import { productTextEmbeddingGeneratorAi } from '@worker/v1/ai/ai.product-text-embedding-generator.js';
+import productWeightInfoGeneratorAi from '@worker/v1/ai/ai.product-weight-info-generator.js';
 import {
   FLAT_FILE_EXTS_TO_PROCESS,
   SPREADSHEET_FILE_EXTS_TO_PROCESS,
   ZIP_FILE_EXTS_TO_PROCESS,
 } from '@worker/v1/processor/processor.constant.js';
-import { FileConfig } from '@worker/v1/processor/processor.type.js';
 import {
-  BaseProductData,
-  // ProductDataDimensionUnit,
-  // ProductDimensionData,
-  // ProductImageData,
-  // ProductIsoCodeData,
-  // ProductDescriptionAndCategoryData,
-  // ProductStyleData,
-  // ProductWeightData,
-  // ProductDataWeightUnit,
+  FileConfig,
+  ProductDataDimensionUnit,
+  ProductDataWeightUnit,
+} from '@worker/v1/processor/processor.type.js';
+import {
+  BaseProduct,
+  ProductDimensionInfo,
+  ProductStyleInfo,
+  ProductWeightInfo,
 } from '@worker/v1/product/product.type.js';
 
 export function getVendorProductDataFileKeysThatCanBeProcessed(keys: string[]) {
@@ -63,7 +63,7 @@ function getProductHeadersAndContents(
   };
 }
 
-export function getBaseProductData(
+export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
   productDataLines: string[],
   fileConfig: FileConfig
 ) {
@@ -72,11 +72,35 @@ export function getBaseProductData(
     fileConfig
   );
 
-  const baseProductData: BaseProductData[] = contents.map((row) => {
+  const initialBaseProducts: Omit<
+    BaseProduct,
+    | 'mainImageUrl'
+    | 'category'
+    | 'currencyCode'
+    | 'warehouseCountryCodes'
+    | 'shippingCountryCodes'
+  >[] = contents.map((row) => {
     const values = row.split(fileConfig.delimiter);
     const dataObj = Object.fromEntries(headers.map((h, i) => [h, values[i]]));
 
+    const map = fileConfig.map.map
+      ? parseFloat(dataObj[fileConfig.map.map])
+      : NaN;
+
+    const msrp = fileConfig.map.msrp
+      ? parseFloat(dataObj[fileConfig.map.msrp])
+      : NaN;
+
+    const shippingPrice = fileConfig.map.shippingPrice
+      ? parseFloat(dataObj[fileConfig.map.shippingPrice])
+      : NaN;
+
+    const unitPerBox = parseInt(dataObj[fileConfig.map.unitPerBox ?? '1']);
+
+    const imageUrls = extractProductImageUrls(row);
+
     return {
+      line: row,
       sku: dataObj[fileConfig.map.sku],
       itemId: dataObj[fileConfig.map.itemId ?? 'NA'],
       gtin: dataObj[fileConfig.map.gtin ?? 'NA'],
@@ -85,353 +109,366 @@ export function getBaseProductData(
       name: dataObj[fileConfig.map.name],
       description: dataObj[fileConfig.map.description],
       pdpLink: dataObj[fileConfig.map.pdpLink ?? 'NA'],
-      tradePrice: parseFloat(dataObj[fileConfig.map.tradePrice]) || 0,
-      map: fileConfig.map.map
-        ? parseFloat(dataObj[fileConfig.map.map])
-        : undefined,
-      msrp: fileConfig.map.msrp
-        ? parseFloat(dataObj[fileConfig.map.msrp])
-        : undefined,
-      retailPrice: fileConfig.map.retailPrice
-        ? parseFloat(dataObj[fileConfig.map.retailPrice])
-        : undefined,
-      shippingPrice: fileConfig.map.shippingPrice
-        ? parseFloat(dataObj[fileConfig.map.shippingPrice])
-        : undefined,
-      unitPerBox: parseInt(dataObj[fileConfig.map.unitPerBox ?? '1']),
+      tradePrice: parseFloat(dataObj[fileConfig.map.tradePrice]),
+      map: isNaN(map) ? undefined : map <= 0 ? undefined : map,
+      msrp: isNaN(msrp) ? undefined : msrp <= 0 ? undefined : msrp,
+      shippingPrice: isNaN(shippingPrice)
+        ? undefined
+        : shippingPrice <= 0
+        ? undefined
+        : shippingPrice,
+      unitPerBox: isNaN(unitPerBox) ? 1 : unitPerBox < 1 ? 1 : unitPerBox,
       stockQty: parseInt(dataObj[fileConfig.map.stockQty ?? '0']),
       restockDate: fileConfig.map.restockDate
         ? new Date(dataObj[fileConfig.map.restockDate])
         : undefined,
+      imageUrls,
     };
   });
 
-  return baseProductData;
+  const [productMainImageDetectorAiResponses, productsIsoCodeInfo] =
+    await Promise.all([
+      Promise.all(
+        initialBaseProducts.map((initialBaseProduct) =>
+          productMainImageDetectorAi(initialBaseProduct.imageUrls)
+        )
+      ),
+      getProductsIsoCodeInfo(fileConfig.headerLine, productDataLines),
+    ]);
+
+  const initialBaseProductsWithMainImageUrlAndIsoCodeInfo =
+    initialBaseProducts.map((initialBaseProduct, index) => {
+      const mainImageHasSolidBackground =
+        !!productMainImageDetectorAiResponses[index].data?.hasWhiteBackground;
+
+      const mainImageIndex = Number(
+        productMainImageDetectorAiResponses[index].data?.mainImageImageIndex ??
+          '0'
+      );
+
+      const mainImageUrl = initialBaseProduct.imageUrls[mainImageIndex];
+
+      return {
+        ...initialBaseProduct,
+        mainImageUrl: mainImageHasSolidBackground ? mainImageUrl : undefined,
+        ...(productsIsoCodeInfo[index] ?? {}),
+      };
+    });
+
+  return initialBaseProductsWithMainImageUrlAndIsoCodeInfo.filter(
+    (initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
+      initialBaseProductWithMainImageUrlAndIsoCodeInfo.mainImageUrl !==
+        undefined &&
+      initialBaseProductWithMainImageUrlAndIsoCodeInfo.currencyCode !==
+        undefined
+  ) as Omit<BaseProduct, 'category'>[];
 }
 
-// export function extractProductImageUrls(productContentLines: string[]) {
-//   const urlPattern = /https?:\/\/[^\s,]+/g;
-//   const imagePattern = /\.(jpg|jpeg|png|gif|svg|webp|bmp|tiff|ico)($|\?|#)/i;
-//   const cdnPattern =
-//     /(images?|img|cdn|static|media|assets|photos|gallery|resize|thumb)/i;
+export function extractProductImageUrls(productLine: string) {
+  const urlPattern = /https?:\/\/[^\s,]+/g;
+  const imagePattern = /\.(jpg|jpeg|png|gif|svg|webp|bmp|tiff|ico)($|\?|#)/i;
+  const cdnPattern =
+    /(images?|img|cdn|static|media|assets|photos|gallery|resize|thumb)/i;
 
-//   const productContentsImageUrls = productContentLines.map((line) => {
-//     const matches = line.match(urlPattern) || [];
-//     return matches
-//       .filter((url) => imagePattern.test(url) || cdnPattern.test(url))
-//       .map((url) => url.trim());
-//   });
+  const matches = productLine.match(urlPattern) || [];
+  const urls = matches
+    .filter((url) => imagePattern.test(url) || cdnPattern.test(url))
+    .map((url) => url.trim());
 
-//   return productContentsImageUrls.map((urls) => [...new Set(urls)]);
-// }
+  return [...new Set(urls)];
+}
 
-// export async function getProductImageData(
-//   productDataLines: string[],
-//   fileConfig: FileConfig
-// ) {
-//   const { contents } = getProductHeadersAndContents(
-//     productDataLines,
-//     fileConfig
-//   );
+export async function getProductsIsoCodeInfo(
+  headerLine: string,
+  productDataLines: string[]
+) {
+  const productIsoCodeInfoResponses = await Promise.all(
+    productDataLines.map((line) =>
+      productIsoCodeInfoGeneratorAi({
+        headerLine,
+        productDataLine: line,
+      })
+    )
+  );
 
-//   const productContentsImageUrls = extractProductImageUrls(contents);
+  const productsIsoCodeInfo = productIsoCodeInfoResponses.map(
+    (response) => response.data
+  );
 
-//   const productMainImageUrlResponses = await Promise.all(
-//     productContentsImageUrls.map((imageUrls) =>
-//       productMainImageDetectorAi(imageUrls)
-//     )
-//   );
+  return productsIsoCodeInfo;
+}
 
-//   const productMainImageUrls = productMainImageUrlResponses.map(
-//     (response, index) =>
-//       productContentsImageUrls[index][
-//         Number(response.data?.mainImageImageIndex ?? '0')
-//       ]
-//   );
+export async function getProductsDimensionInfo(
+  headerLine: string,
+  productDataLines: string[]
+) {
+  const productDimensionInfoResponses = await Promise.all(
+    productDataLines.map((line) =>
+      productDimensionInfoGeneratorAi({
+        headerLine,
+        productDataLine: line,
+      })
+    )
+  );
 
-//   const productImageData: ProductImageData[] = productContentsImageUrls.map(
-//     (imageUrls, index) => {
-//       let ludwigImageUrl = productMainImageUrls[index];
+  const productDimensionInfo = productDimensionInfoResponses
+    .map(
+      (response) =>
+        response.data ?? {
+          dimension: null,
+          width: null,
+          height: null,
+          depth: null,
+          shippingDimension: null,
+          shippingWidth: null,
+          shippingHeight: null,
+          shippingDepth: null,
+          dimensionUnit: 'in' as ProductDataDimensionUnit,
+        }
+    )
+    .map((response) => {
+      // Main Dimensions
+      const mainDimensionValuesInInches = conversion.convertDimensionsToInches(
+        {
+          width: response.width,
+          height: response.height,
+          depth: response.depth,
+        },
+        response.dimensionUnit
+      );
 
-//       if (ludwigImageUrl === '') ludwigImageUrl = imageUrls[0];
+      const mainDimensionValuesInInchesArray: {
+        value: number;
+        label: 'W' | 'H' | 'D';
+      }[] = [];
+      if (response.width)
+        mainDimensionValuesInInchesArray.push({
+          value: mainDimensionValuesInInches.width,
+          label: 'W',
+        });
+      if (response.depth)
+        mainDimensionValuesInInchesArray.push({
+          value: mainDimensionValuesInInches.depth,
+          label: 'D',
+        });
+      if (response.height)
+        mainDimensionValuesInInchesArray.push({
+          value: mainDimensionValuesInInches.height,
+          label: 'H',
+        });
 
-//       return {
-//         imageUrls,
-//         mainImageUrl: null,
-//         ludwigImageUrl,
-//       };
-//     }
-//   );
+      const mainDimensionStringFormat =
+        mainDimensionValuesInInchesArray.length > 0
+          ? mainDimensionValuesInInchesArray
+              .map((dimension) => `${dimension.value}"${dimension.label}`)
+              .join(' x ')
+          : null;
 
-//   return productImageData;
-// }
+      // Shipping Dimensions
+      const shippingDimensionValuesInInches =
+        conversion.convertDimensionsToInches(
+          {
+            width: response.shippingWidth ?? response.width,
+            height: response.shippingHeight ?? response.height,
+            depth: response.shippingDepth ?? response.depth,
+          },
+          response.dimensionUnit
+        );
 
-// export async function getProductIsoCodeData(
-//   productDataLines: string[],
-//   fileConfig: FileConfig
-// ) {
-//   const { contents } = getProductHeadersAndContents(
-//     productDataLines,
-//     fileConfig
-//   );
+      const shippingDimensionValuesInInchesArray: {
+        value: number;
+        label: 'W' | 'H' | 'D';
+      }[] = [];
+      if (shippingDimensionValuesInInches.width !== 0)
+        shippingDimensionValuesInInchesArray.push({
+          value: shippingDimensionValuesInInches.width,
+          label: 'W',
+        });
+      if (shippingDimensionValuesInInches.depth !== 0)
+        shippingDimensionValuesInInchesArray.push({
+          value: shippingDimensionValuesInInches.depth,
+          label: 'D',
+        });
+      if (shippingDimensionValuesInInches.height !== 0)
+        shippingDimensionValuesInInchesArray.push({
+          value: shippingDimensionValuesInInches.height,
+          label: 'H',
+        });
 
-//   const productIsoValuesResponses = await Promise.all(
-//     contents.map((line) =>
-//       productIsoValuesGeneratorAi({
-//         headerLine: fileConfig.headerLine,
-//         productDataLine: line,
-//       })
-//     )
-//   );
+      const shippingDimensionStringFormat =
+        shippingDimensionValuesInInchesArray.length > 0
+          ? shippingDimensionValuesInInchesArray
+              .map((dimension) => `${dimension.value}"${dimension.label}`)
+              .join(' x ')
+          : null;
 
-//   const productIsoValues = productIsoValuesResponses.map(
-//     (response) =>
-//       response.data ?? {
-//         warehouseCountryCodes: [],
-//         shippingCountryCodes: [],
-//         currencyCode: 'USD',
-//       }
-//   ) as ProductIsoCodeData[];
+      return {
+        dimension: mainDimensionStringFormat,
+        width: mainDimensionValuesInInches.width,
+        height: mainDimensionValuesInInches.height,
+        depth: mainDimensionValuesInInches.depth,
+        shippingDimension: shippingDimensionStringFormat,
+        shippingWidth: shippingDimensionValuesInInches.width,
+        shippingHeight: shippingDimensionValuesInInches.height,
+        shippingDepth: shippingDimensionValuesInInches.depth,
+        dimensionUnit: 'in',
+      } as ProductDimensionInfo;
+    });
 
-//   return productIsoValues;
-// }
+  return productDimensionInfo;
+}
 
-// export async function getProductDimensionData(
-//   productDataLines: string[],
-//   fileConfig: FileConfig
-// ) {
-//   const { contents } = getProductHeadersAndContents(
-//     productDataLines,
-//     fileConfig
-//   );
+export async function getProductsWeightInfo(
+  headerLine: string,
+  productDataLines: string[]
+) {
+  const productWeightInfoResponses = await Promise.all(
+    productDataLines.map((line) =>
+      productWeightInfoGeneratorAi({
+        headerLine,
+        productDataLine: line,
+      })
+    )
+  );
 
-//   const productDimensionValuesResponses = await Promise.all(
-//     contents.map((line) =>
-//       productDimensionValuesGeneratorAi({
-//         headerLine: fileConfig.headerLine,
-//         productDataLine: line,
-//       })
-//     )
-//   );
+  const productWeightInfo = productWeightInfoResponses
+    .map(
+      (response) =>
+        response.data ?? {
+          weight: null,
+          shippingWeight: null,
+          weightUnit: 'lb' as ProductDataWeightUnit,
+        }
+    )
+    .map((response) => {
+      // Main Weight
+      const mainWeightValuesInLbs = conversion.convertWeightToLbs(
+        response.weight,
+        response.weightUnit
+      );
 
-//   const productDimensionData = productDimensionValuesResponses
-//     .map(
-//       (response) =>
-//         response.data ?? {
-//           dimension: null,
-//           width: null,
-//           height: null,
-//           depth: null,
-//           shippingDimension: null,
-//           shippingWidth: null,
-//           shippingHeight: null,
-//           shippingDepth: null,
-//           dimensionUnit: 'in' as DimensionUnit,
-//         }
-//     )
-//     .map((response) => {
-//       // Main Dimensions
-//       const mainDimensionValuesInInches = conversion.convertDimensionsToInches(
-//         {
-//           width: response.width,
-//           height: response.height,
-//           depth: response.depth,
-//         },
-//         response.dimensionUnit
-//       );
+      // Shipping Weight
+      const shippingWeightValuesInLbs = conversion.convertWeightToLbs(
+        response.shippingWeight ?? response.weight,
+        response.weightUnit
+      );
 
-//       const mainDimensionValuesInInchesArray: {
-//         value: number;
-//         label: 'W' | 'H' | 'D';
-//       }[] = [];
-//       if (response.width)
-//         mainDimensionValuesInInchesArray.push({
-//           value: mainDimensionValuesInInches.width,
-//           label: 'W',
-//         });
-//       if (response.depth)
-//         mainDimensionValuesInInchesArray.push({
-//           value: mainDimensionValuesInInches.depth,
-//           label: 'D',
-//         });
-//       if (response.height)
-//         mainDimensionValuesInInchesArray.push({
-//           value: mainDimensionValuesInInches.height,
-//           label: 'H',
-//         });
+      return {
+        weight: mainWeightValuesInLbs.weight,
+        shippingWeight: shippingWeightValuesInLbs.weight,
+        weightUnit: 'lb',
+      } as ProductWeightInfo;
+    });
 
-//       const mainDimensionStringFormat =
-//         mainDimensionValuesInInchesArray.length > 0
-//           ? mainDimensionValuesInInchesArray
-//               .map((dimension) => `${dimension.value}"${dimension.label}`)
-//               .join(' x ')
-//           : null;
+  return productWeightInfo;
+}
 
-//       // Shipping Dimensions
-//       const shippingDimensionValuesInInches =
-//         conversion.convertDimensionsToInches(
-//           {
-//             width: response.shippingWidth ?? response.width,
-//             height: response.shippingHeight ?? response.height,
-//             depth: response.shippingDepth ?? response.depth,
-//           },
-//           response.dimensionUnit
-//         );
+export async function getProductsStyleInfo(
+  headerLine: string,
+  info: {
+    line: string;
+    mainImageUrl: string;
+  }[]
+) {
+  const productStyleInfoResponses = await Promise.all(
+    info.map(({ line, mainImageUrl }) =>
+      productStyleInfoGeneratorAi({
+        headerLine,
+        productDataLine: line,
+        mainImageUrl,
+      })
+    )
+  );
 
-//       const shippingDimensionValuesInInchesArray: {
-//         value: number;
-//         label: 'W' | 'H' | 'D';
-//       }[] = [];
-//       if (shippingDimensionValuesInInches.width !== 0)
-//         shippingDimensionValuesInInchesArray.push({
-//           value: shippingDimensionValuesInInches.width,
-//           label: 'W',
-//         });
-//       if (shippingDimensionValuesInInches.depth !== 0)
-//         shippingDimensionValuesInInchesArray.push({
-//           value: shippingDimensionValuesInInches.depth,
-//           label: 'D',
-//         });
-//       if (shippingDimensionValuesInInches.height !== 0)
-//         shippingDimensionValuesInInchesArray.push({
-//           value: shippingDimensionValuesInInches.height,
-//           label: 'H',
-//         });
+  const productsStyleInfo: ProductStyleInfo[] = productStyleInfoResponses.map(
+    (response) =>
+      response.data ?? {
+        colorNames: [],
+        hexColors: [],
+        materials: [],
+        styles: [],
+      }
+  );
 
-//       const shippingDimensionStringFormat =
-//         shippingDimensionValuesInInchesArray.length > 0
-//           ? shippingDimensionValuesInInchesArray
-//               .map((dimension) => `${dimension.value}"${dimension.label}`)
-//               .join(' x ')
-//           : null;
+  return productsStyleInfo;
+}
 
-//       return {
-//         dimension: mainDimensionStringFormat,
-//         width: mainDimensionValuesInInches.width,
-//         height: mainDimensionValuesInInches.height,
-//         depth: mainDimensionValuesInInches.depth,
-//         shippingDimension: shippingDimensionStringFormat,
-//         shippingWidth: shippingDimensionValuesInInches.width,
-//         shippingHeight: shippingDimensionValuesInInches.height,
-//         shippingDepth: shippingDimensionValuesInInches.depth,
-//         dimensionUnit: 'in',
-//       } as ProductDimensionData;
-//     });
+export async function getProductsImageEmbedding(mainImageUrls: string[]) {
+  const productImageEmbeddingResponses = await Promise.all(
+    mainImageUrls.map((mainImageUrl) =>
+      productImageEmbeddingGeneratorAi(mainImageUrl)
+    )
+  );
 
-//   return productDimensionData;
-// }
+  return productImageEmbeddingResponses.map((response) => ({
+    imageEmbedding: response.data,
+  }));
+}
 
-// export async function getProductWeightData(
-//   productDataLines: string[],
-//   fileConfig: FileConfig
-// ) {
-//   const { contents } = getProductHeadersAndContents(
-//     productDataLines,
-//     fileConfig
-//   );
+export async function getProductsTextEmbedding(texts: string[]) {
+  const productTextEmbeddingResponses = await Promise.all(
+    texts.map((text) => productTextEmbeddingGeneratorAi(text))
+  );
 
-//   const productWeightValuesResponses = await Promise.all(
-//     contents.map((line) =>
-//       productWeightValuesGeneratorAi({
-//         headerLine: fileConfig.headerLine,
-//         productDataLine: line,
-//       })
-//     )
-//   );
+  return productTextEmbeddingResponses.map((response) => ({
+    textEmbedding: response.data,
+  }));
+}
 
-//   const productWeightData = productWeightValuesResponses
-//     .map(
-//       (response) =>
-//         response.data ?? {
-//           weight: null,
-//           shippingWeight: null,
-//           weightUnit: 'lb' as WeightUnit,
-//         }
-//     )
-//     .map((response) => {
-//       // Main Weight
-//       const mainWeightValuesInLbs = conversion.convertWeightToLbs(
-//         response.weight,
-//         response.weightUnit
-//       );
+export function getProductComputedData(
+  baseProductWithNoCategory: Omit<BaseProduct, 'category'>
+) {
+  const retailPrice =
+    baseProductWithNoCategory.msrp ??
+    baseProductWithNoCategory.map ??
+    baseProductWithNoCategory.tradePrice * 2;
 
-//       // Shipping Weight
-//       const shippingWeightValuesInLbs = conversion.convertWeightToLbs(
-//         response.shippingWeight ?? response.weight,
-//         response.weightUnit
-//       );
+  const price = {
+    currencyCode: baseProductWithNoCategory.currencyCode,
+    retailPrice,
+    msrp: baseProductWithNoCategory.msrp,
+    map: baseProductWithNoCategory.map,
+    tradePrice: baseProductWithNoCategory.tradePrice,
+    shippingPrice: baseProductWithNoCategory.shippingPrice,
+  };
 
-//       return {
-//         weight: mainWeightValuesInLbs.weight,
-//         shippingWeight: shippingWeightValuesInLbs.weight,
-//         weightUnit: 'lb',
-//       } as ProductWeightData;
-//     });
+  const hasCAD = price.currencyCode === 'CAD';
+  const hasUSD = price.currencyCode === 'USD';
+  const retailPriceCAD =
+    price.currencyCode === 'CAD' ? price.retailPrice : undefined;
+  const retailPriceUSD =
+    price.currencyCode === 'USD' ? price.retailPrice : undefined;
 
-//   return productWeightData;
-// }
+  const stockQtyUSD =
+    price.currencyCode === 'USD' ? baseProductWithNoCategory.stockQty : 0;
+  const stockQtyCAD =
+    price.currencyCode === 'CAD' ? baseProductWithNoCategory.stockQty : 0;
+  const restockDateUSD =
+    price.currencyCode === 'USD'
+      ? baseProductWithNoCategory.restockDate
+      : undefined;
+  const restockDateCAD =
+    price.currencyCode === 'CAD'
+      ? baseProductWithNoCategory.restockDate
+      : undefined;
 
-// export async function getProductStyleData(
-//   productDataLines: string[],
-//   fileConfig: FileConfig,
-//   productImageData: ProductImageData[]
-// ) {
-//   const { contents } = getProductHeadersAndContents(
-//     productDataLines,
-//     fileConfig
-//   );
-
-//   const productStyleResponses = await Promise.all(
-//     contents.map((line, index) =>
-//       productStyleGeneratorAi({
-//         headerLine: fileConfig.headerLine,
-//         productDataLine: line,
-//         mainImageUrl: productImageData[index].ludwigImageUrl,
-//       })
-//     )
-//   );
-
-//   const productStyleData: ProductStyleData[] = productStyleResponses.map(
-//     (response) =>
-//       response.data ?? {
-//         colorNames: [],
-//         hexColors: [],
-//         materials: [],
-//         styles: [],
-//       }
-//   );
-
-//   return productStyleData;
-// }
-
-// export async function getProductDescriptionAndCategoryData(
-//   productDataLines: string[],
-//   fileConfig: FileConfig,
-//   productImageData: ProductImageData[],
-//   baseProductData: BaseProductData[]
-// ) {
-//   const { contents } = getProductHeadersAndContents(
-//     productDataLines,
-//     fileConfig
-//   );
-//   const productTextResponses = await Promise.all(
-//     contents.map((line, index) =>
-//       productDescriptorAndCategorizerAi({
-//         headerLine: fileConfig.headerLine,
-//         productDataLine: line,
-//         mainImageUrl: productImageData[index].ludwigImageUrl,
-//       })
-//     )
-//   );
-
-//   const productDescriptionAndCategoryData = productTextResponses.map(
-//     (response, index) =>
-//       response.data ?? {
-//         name: baseProductData[index].name,
-//         description: baseProductData[index].description,
-//         category: '',
-//       }
-//   ) as ProductDescriptionAndCategoryData[];
-
-//   return productDescriptionAndCategoryData;
-// }
+  return {
+    price,
+    hasCAD,
+    hasUSD,
+    retailPriceCAD,
+    retailPriceUSD,
+    stockQtyUSD,
+    stockQtyCAD,
+    restockDateUSD,
+    restockDateCAD,
+    retailPrice: undefined,
+    msrp: undefined,
+    map: undefined,
+    tradePrice: undefined,
+    shippingPrice: undefined,
+    stockQty: undefined,
+    restockDate: undefined,
+    currencyCode: undefined,
+  };
+}

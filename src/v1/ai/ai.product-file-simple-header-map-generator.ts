@@ -1,4 +1,4 @@
-import { googleGemini2_5FlashLiteLlm } from '@worker/config/gemini.js';
+import { googleGemini2_5FlashLite } from '@worker/config/gemini.js';
 import { asyncTryCatch } from '@worker/utils/try-catch.js';
 import { AI_PRODUCT_DATA_MAP_GENERATOR_FIELD_NAMES } from '@worker/v1/ai/ai.constant.js';
 import { generateObject } from 'ai';
@@ -70,7 +70,7 @@ export default async function productFileSimpleHeaderMapGeneratorAi(
 ) {
   const { data, errorRecord } = await asyncTryCatch(() =>
     generateObject({
-      model: googleGemini2_5FlashLiteLlm,
+      model: googleGemini2_5FlashLite,
       system: systemPrompt,
       schema: zProductFieldMapGeneratorSchema,
       prompt: `Analyze the provided vendor product data and create a field mapping. The data contains product information with various fields that need to be mapped to our standardized schema.

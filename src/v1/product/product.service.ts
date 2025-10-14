@@ -1,49 +1,36 @@
-// import { DbDataAPIVector } from '@worker/config/db/index.js';
-// import { error } from '@worker/utils/error.js';
-// import { asyncTryCatch } from '@worker/utils/try-catch.js';
-// import uid from '@worker/utils/uid.js';
-// import { dbProductCollection } from '@worker/v1/product/product.db.js';
-// import { CreateProduct, Product } from '@worker/v1/product/product.type.js';
-// import { getLudwigImageEmbeddings } from '@worker/v1/product/product.util.js';
+import { api } from '@worker/config/convex/convex.type.js';
+import { convexHttpClient } from '@worker/config/convex/index.js';
+import { env } from '@worker/config/environment.js';
+import { asyncTryCatch } from '@worker/utils/try-catch.js';
+import {
+  CreateProduct,
+  Product,
+  UpdateProduct,
+} from '@worker/v1/product/product.type.js';
 
-// export async function createProductsService(args: ) {
-//   const {
-//     data: vectorNumberArray,
-//     errorRecord: getLudwigImageEmbeddingsErrorRecord,
-//   } = await getLudwigImageEmbeddings(createProductData.ludwigImageUrl);
+export async function getProductsBySkusService(skus: string[]) {
+  return await asyncTryCatch<{ data: Product[] }>(() =>
+    convexHttpClient.query(api.v1.product.query.getPoProductsBySkus, {
+      poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
+      skus,
+    })
+  );
+}
 
-//   if (getLudwigImageEmbeddingsErrorRecord) {
-//     error.sendErrorMessage({
-//       ...getLudwigImageEmbeddingsErrorRecord,
-//       details: [
-//         ...(getLudwigImageEmbeddingsErrorRecord.details ?? []),
-//         {
-//           function: 'getLudwigImageEmbeddings',
-//           createProductData,
-//         },
-//       ],
-//     });
-//     return;
-//   }
+export async function createProductsService(data: CreateProduct[]) {
+  return await asyncTryCatch(() =>
+    convexHttpClient.mutation(api.v1.product.mutation.createPoProducts, {
+      poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
+      data,
+    })
+  );
+}
 
-//   const newProduct: Omit<Product, '_id'> = {
-//     ...createProductData,
-//     fhSku: uid.generate(),
-//     status: 'Active',
-//     stockDate: new Date(),
-//     $vector: new DbDataAPIVector(vectorNumberArray),
-//     $lexical: createProductData.description,
-//     createdAt: new Date(),
-//     updatedAt: new Date(),
-//   };
-
-//   const { data: result, errorRecord } = await asyncTryCatch(() =>
-//     dbProductCollection.insertOne(newProduct)
-//   );
-
-//   if (errorRecord) return { errorRecord };
-
-//   return {
-//     data: { ...newProduct, _id: result.insertedId },
-//   };
-// }
+export async function updateProductsByIdService(data: UpdateProduct[]) {
+  return await asyncTryCatch(() =>
+    convexHttpClient.mutation(api.v1.product.mutation.updatePoProductsById, {
+      poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
+      data,
+    })
+  );
+}

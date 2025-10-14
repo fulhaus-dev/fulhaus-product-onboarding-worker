@@ -1,20 +1,32 @@
-// import { error } from '@worker/utils/error.js';
-// import logger from '@worker/utils/logger.js';
+import { env } from '@worker/config/environment.js';
+import { error } from '@worker/utils/error.js';
+import uid from '@worker/utils/uid.js';
+import productInfoGeneratorAi from '@worker/v1/ai/ai.product-info-generator.js';
 import { FileConfig } from '@worker/v1/processor/processor.type.js';
 import {
-  getBaseProductData,
-  // getProductDimensionData,
-  // getProductImageData,
-  // getProductIsoCodeData,
-  // getProductDescriptionAndCategoryData,
-  // getProductStyleData,
-  // getProductWeightData,
+  getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo,
+  getProductComputedData,
+  getProductsDimensionInfo,
+  getProductsImageEmbedding,
+  getProductsStyleInfo,
+  getProductsTextEmbedding,
+  getProductsWeightInfo,
 } from '@worker/v1/processor/processor.util.js';
-// import { createProductService } from '@worker/v1/product/product.service.js';
-// import { CreateProduct } from '@worker/v1/product/product.type.js';
-// import { appendFile } from 'fs/promises';
+import {
+  createProductsService,
+  getProductsBySkusService,
+  updateProductsByIdService,
+} from '@worker/v1/product/product.service.js';
+import {
+  BaseProduct,
+  CreateProduct,
+  Product,
+  ProductCategory,
+} from '@worker/v1/product/product.type.js';
 
-let count = 1;
+type CategoryCount = Record<ProductCategory, number>;
+
+export let categoryCount: CategoryCount = {} as CategoryCount;
 
 class ProductLinesQueue {
   private queue: string[] = [];
@@ -28,22 +40,28 @@ class ProductLinesQueue {
     fileConfig: FileConfig,
     idArgs: { vendorId: string; ownerId?: string }
   ) {
+    if (this.queue.length > env.MAX_PROCESSING_QUEUE_SIZE) return false;
+
     this.queue.push(...lines);
     this.fileConfig = fileConfig;
     this.idArgs = idArgs;
 
     // Start processing if not already running
-    if (!this.isProcessing) {
-      this.processQueue();
-    }
+    if (!this.isProcessing) this.processQueue();
+
+    return true;
+  }
+
+  hasSpace(): boolean {
+    return this.queue.length < env.MAX_PROCESSING_QUEUE_SIZE;
   }
 
   private async processQueue() {
     this.isProcessing = true;
 
     while (this.queue.length > 0) {
-      // Take next 20 (or less) from queue
-      const batch = this.queue.splice(0, 20);
+      // Take next batch from queue
+      const batch = this.queue.splice(0, env.MAX_PROCESSING_BATCH);
 
       // Process this batch and wait for completion
       await processProductLines(batch, this.fileConfig!, this.idArgs!);
@@ -60,14 +78,14 @@ class ProductLinesQueue {
 }
 
 // Create global queue instance
-const productQueue = new ProductLinesQueue();
+export const productQueue = new ProductLinesQueue();
 
 export default function processProductLinesWorker(
   productDataLines: string[],
   fileConfig: FileConfig,
   idArgs: { vendorId: string; ownerId?: string }
 ) {
-  productQueue.addLines(productDataLines, fileConfig, idArgs);
+  return productQueue.addLines(productDataLines, fileConfig, idArgs);
 }
 
 async function processProductLines(
@@ -75,112 +93,241 @@ async function processProductLines(
   fileConfig: FileConfig,
   idArgs: { vendorId: string; ownerId?: string }
 ) {
-  const baseProductData = getBaseProductData(productDataLines, fileConfig);
+  let initialBaseProductsWithMainImageUrlAndIsoCodeInfo =
+    await getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
+      productDataLines,
+      fileConfig
+    );
+  if (initialBaseProductsWithMainImageUrlAndIsoCodeInfo.length < 1) return;
 
-  console.log('baseProductData', baseProductData);
+  const currentSkus = initialBaseProductsWithMainImageUrlAndIsoCodeInfo.map(
+    (initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
+      initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+  );
 
-  //////////////////
-  // const productImageData = await getProductImageData(
-  //   productDataLines,
-  //   fileConfig
-  // );
+  const { data: existingProductSkusResponse } = await getProductsBySkusService(
+    currentSkus
+  );
 
-  //   for (let i = 0; i < baseProductData.length; i++) {
-  //     const sku = baseProductData[i].sku;
-  //     const name = baseProductData[i].name;
-  //     const imageUrls = productImageData[i].imageUrls;
-  //     const mainImageUrl = productImageData[i].mainImageUrl;
+  const existingProducts = initialBaseProductsWithMainImageUrlAndIsoCodeInfo
+    .map((initialBaseProductWithMainImageUrlAndIsoCodeInfo) => {
+      const existingProduct = existingProductSkusResponse?.data?.find(
+        (existingProduct) =>
+          existingProduct?.sku ===
+          initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+      );
+      if (!existingProduct) return;
 
-  //     const dataToWrite = `
-  // ${count} *******
-  // SKU: ${sku}
-  // NAME: ${name}
+      return existingProduct;
+    })
+    .filter((existingProduct) => existingProduct !== undefined);
 
-  // IMAGE URLS:
-  // ${imageUrls.join('\n')}
+  updateExistingProductPriceInfo(
+    initialBaseProductsWithMainImageUrlAndIsoCodeInfo,
+    existingProducts
+  );
 
-  // DETECTED MAIN IMAGE URL: ${mainImageUrl}
-  // `;
+  initialBaseProductsWithMainImageUrlAndIsoCodeInfo =
+    initialBaseProductsWithMainImageUrlAndIsoCodeInfo.filter(
+      (initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
+        !existingProducts.some(
+          (existingProduct) =>
+            existingProduct.sku ===
+            initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+        )
+    );
+  if (initialBaseProductsWithMainImageUrlAndIsoCodeInfo.length < 1) return;
 
-  //     count++;
+  const productInfoResponses = await Promise.all(
+    initialBaseProductsWithMainImageUrlAndIsoCodeInfo.map(
+      (initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
+        productInfoGeneratorAi({
+          name: initialBaseProductWithMainImageUrlAndIsoCodeInfo.name,
+          description:
+            initialBaseProductWithMainImageUrlAndIsoCodeInfo.description,
+          mainImageUrl:
+            initialBaseProductWithMainImageUrlAndIsoCodeInfo.mainImageUrl,
+        })
+    )
+  );
 
-  //     try {
-  //       const jsonLine = dataToWrite + '\n';
-  //       await appendFile('sample-image-data.txt', jsonLine, 'utf8');
-  //     } catch (writeError) {
-  //       console.error('Failed to write to error.txt:', writeError);
-  //     }
-  //   }
-  //////////////////
+  const baseProducts = initialBaseProductsWithMainImageUrlAndIsoCodeInfo
+    .map((initialBaseProductWithMainImageUrlAndIsoCodeInfo, index) => ({
+      ...initialBaseProductWithMainImageUrlAndIsoCodeInfo,
+      name: productInfoResponses[index].data?.name,
+      description: productInfoResponses[index].data?.description,
+      category: productInfoResponses[index].data?.category,
+    }))
+    .filter(
+      (baseProduct) =>
+        baseProduct.name !== undefined &&
+        baseProduct.description !== undefined &&
+        baseProduct.category !== undefined &&
+        (categoryCount[baseProduct.category] ?? 0) <= env.MAX_CATEGORIES
+    ) as BaseProduct[];
+  if (baseProducts.length < 1) return;
 
-  // const [
-  //   productImageData,
-  //   productIsoCodeData,
-  //   productDimensionData,
-  //   productWeightData,
-  // ] = await Promise.all([
-  //   getProductImageData(productDataLines, fileConfig),
-  //   getProductIsoCodeData(productDataLines, fileConfig),
-  //   getProductDimensionData(productDataLines, fileConfig),
-  //   getProductWeightData(productDataLines, fileConfig),
-  // ]);
+  for (const baseProduct of baseProducts) {
+    const currentCategoryCount = categoryCount[baseProduct.category] ?? 0;
+    categoryCount[baseProduct.category] = currentCategoryCount + 1;
+  }
 
-  // const [productStyleData, productDescriptionAndCategoryData] =
-  //   await Promise.all([
-  //     getProductStyleData(productDataLines, fileConfig, productImageData),
-  //     getProductDescriptionAndCategoryData(
-  //       productDataLines,
-  //       fileConfig,
-  //       productImageData,
-  //       baseProductData
-  //     ),
-  //   ]);
+  const baseProductsLine = baseProducts.map((baseProduct) => baseProduct.line);
 
-  // const productsToCreate: CreateProduct[] = baseProductData.map(
-  //   (product, index) => ({
-  //     vendorId: idArgs.vendorId,
-  //     ownerId: idArgs.ownerId ?? null,
-  //     ...product,
-  //     ...productImageData[index],
-  //     ...productIsoCodeData[index],
-  //     ...productDimensionData[index],
-  //     ...productWeightData[index],
-  //     ...productStyleData[index],
-  //     ...productDescriptionAndCategoryData[index],
-  //   })
-  // );
+  const [
+    productsDimensionInfo,
+    productsWeightInfo,
+    productsStyleInfo,
+    productsImageEmbedding,
+  ] = await Promise.all([
+    getProductsDimensionInfo(fileConfig.headerLine, baseProductsLine),
+    getProductsWeightInfo(fileConfig.headerLine, baseProductsLine),
+    getProductsStyleInfo(
+      fileConfig.headerLine,
+      baseProducts.map((baseProduct) => ({
+        line: baseProduct.line,
+        mainImageUrl: baseProduct.mainImageUrl,
+      }))
+    ),
+    getProductsImageEmbedding(
+      baseProducts.map((baseProduct) => baseProduct.mainImageUrl)
+    ),
+  ]);
 
-  // const createProductResponses = await Promise.all(
-  //   productsToCreate.map((createProductData) =>
-  //     createProductService(createProductData)
-  //   )
-  // );
+  const productsWithoutTextEmbedding = baseProducts.map(
+    (productWithoutTextEmbedding, index) => ({
+      ...productWithoutTextEmbedding,
+      ...productsDimensionInfo[index],
+      ...productsWeightInfo[index],
+      ...productsStyleInfo[index],
+      ...productsImageEmbedding[index],
+    })
+  );
 
-  // logger.info(`✅ Added ${createProductResponses.length} products to DB`);
+  const productsTextEmbeddingParts = productsWithoutTextEmbedding.map(
+    (productWithoutTextEmbedding) => {
+      const textEmbeddingParts = [
+        `SKU: ${productWithoutTextEmbedding.sku}`,
+        `NAME: ${productWithoutTextEmbedding.name}`,
+        `DESCRIPTION: ${productWithoutTextEmbedding.description}`,
+      ];
 
-  // createProductResponses.forEach((response, index) => {
-  //   if (response?.errorRecord) {
-  //     writeErrorToFile(`${JSON.stringify(productsToCreate[index], null, 2)},`);
+      if (productWithoutTextEmbedding.colorNames?.length > 0)
+        textEmbeddingParts.push(
+          `COLORS: ${productWithoutTextEmbedding.colorNames.join(', ')}`
+        );
 
-  //     error.sendErrorMessage({
-  //       ...response.errorRecord,
-  //       details: [
-  //         ...(response.errorRecord.details ?? []),
-  //         {
-  //           function: 'createProductService',
-  //           createProductData: productsToCreate[index],
-  //         },
-  //       ],
-  //     });
-  //   }
-  // });
+      if (productWithoutTextEmbedding.materials?.length > 0)
+        textEmbeddingParts.push(
+          `MATERIALS: ${productWithoutTextEmbedding.materials.join(', ')}`
+        );
+
+      if (productWithoutTextEmbedding.styles?.length > 0)
+        textEmbeddingParts.push(
+          `STYLES: ${productWithoutTextEmbedding.styles.join(', ')}`
+        );
+
+      return textEmbeddingParts.join('\n');
+    }
+  );
+
+  const productsTextEmbedding = await getProductsTextEmbedding(
+    productsTextEmbeddingParts
+  );
+
+  const productsWithUndefinedRequiredValues = productsWithoutTextEmbedding.map(
+    (productWithoutTextEmbedding, index) => {
+      if (!productsTextEmbedding[index]) return;
+      if (!productWithoutTextEmbedding.currencyCode) return;
+
+      const warehouseCountryCodes =
+        productWithoutTextEmbedding.warehouseCountryCodes ?? [];
+      const shippingCountryCodes =
+        productWithoutTextEmbedding.shippingCountryCodes ?? [];
+
+      const { price, ...otherProductComputedData } = getProductComputedData(
+        productWithoutTextEmbedding
+      );
+
+      return {
+        ...productWithoutTextEmbedding,
+        ...productsTextEmbedding[index],
+        warehouseCountryCodes,
+        shippingCountryCodes,
+        vendorId: idArgs.vendorId,
+        ownerId: idArgs.ownerId,
+        fhSku: uid.generate(),
+        ...otherProductComputedData,
+        prices: [price],
+        line: undefined,
+      };
+    }
+  ) as (CreateProduct | undefined)[];
+
+  const products = productsWithUndefinedRequiredValues.filter(
+    (product) => product !== undefined
+  ) as CreateProduct[];
+
+  const { errorRecord } = await createProductsService(products);
+  if (errorRecord)
+    error.sendErrorMessage({
+      ...errorRecord,
+      details: [
+        ...(errorRecord.details ?? []),
+        {
+          function: 'createProductsService',
+          createProductData: products.map((product) => product.sku),
+        },
+      ],
+    });
 }
 
-// async function writeErrorToFile(errorData: any) {
-//   try {
-//     const jsonLine = JSON.stringify(errorData) + '\n';
-//     await appendFile('error.txt', jsonLine, 'utf8');
-//   } catch (writeError) {
-//     console.error('Failed to write to error.txt:', writeError);
-//   }
-// }
+async function updateExistingProductPriceInfo(
+  initialBaseProductsWithMainImageUrlAndIsoCodeInfo: Omit<
+    BaseProduct,
+    'category'
+  >[],
+  existingProducts: Product[]
+) {
+  const existingProductsToUpdate =
+    initialBaseProductsWithMainImageUrlAndIsoCodeInfo
+      .map((initialBaseProductWithMainImageUrlAndIsoCodeInfo) => {
+        const existingProduct = existingProducts?.find(
+          (product) =>
+            product?.sku ===
+            initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+        );
+        if (!existingProduct) return;
+
+        const productCurrencyExists = existingProduct.prices.some(
+          (price) =>
+            price.currencyCode ===
+            initialBaseProductWithMainImageUrlAndIsoCodeInfo.currencyCode
+        );
+        if (productCurrencyExists) return;
+
+        return {
+          existingProduct,
+          currentProduct: initialBaseProductWithMainImageUrlAndIsoCodeInfo,
+        };
+      })
+      .filter((existingProduct) => existingProduct !== undefined);
+  if (existingProductsToUpdate.length < 1) return;
+
+  const productsToUpdate = existingProductsToUpdate.map(
+    ({ existingProduct, currentProduct }) => {
+      const { price, ...otherProductComputedData } =
+        getProductComputedData(currentProduct);
+
+      return {
+        productId: existingProduct._id,
+        updates: {
+          prices: [...existingProduct.prices, price],
+          ...otherProductComputedData,
+        },
+      };
+    }
+  );
+
+  await updateProductsByIdService(productsToUpdate);
+}

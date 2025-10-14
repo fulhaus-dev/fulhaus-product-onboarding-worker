@@ -1,5 +1,4 @@
 import { ProcessorErrorRecord } from '@worker/shared/shared.type.js';
-import logger from '@worker/utils/logger.js';
 import z from 'zod';
 
 function zodErrorMessage(zodError: z.ZodError) {

@@ -25,8 +25,6 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(['error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly'])
     .default('info'),
-  DATASTAX_FULHAUS_DB_TOKEN: z.string(),
-  DATASTAX_FULHAUS_DB_URL: z.string(),
   CLOUDFLARE_R2_ENDPOINT: z.string(),
   CLOUDFLARE_R2_ACCESS_KEY_ID: z.string(),
   CLOUDFLARE_R2_SECRET_ACCESS_KEY: z.string(),
@@ -35,12 +33,13 @@ const envSchema = z.object({
   LUDWIG_VECTOR_DIM: z.coerce.number().int().positive(),
   LUDWIG_VECTOR_METRIC: z.enum(['cosine', 'euclidean', 'dot_product']),
   LUDWIG_VECTOR_GENERATION_ENDPOINT: z.url(),
-  PRODUCT_RERANK_PROVIDER: z.string(),
-  PRODUCT_RERANK_MODEL_NAME: z.string(),
   REPLICATE_API_TOKEN: z.string(),
   CONVEX_DEPLOYMENT: z.string(),
   CONVEX_URL: z.string(),
   CONVEX_PRODUCT_ONBOARDING_API_KEY: z.string(),
+  MAX_PROCESSING_BATCH: z.coerce.number(),
+  MAX_PROCESSING_QUEUE_SIZE: z.coerce.number(),
+  MAX_CATEGORIES: z.coerce.number(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
