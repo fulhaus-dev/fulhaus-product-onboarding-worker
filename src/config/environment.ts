@@ -41,6 +41,7 @@ const envSchema = z.object({
   LUDWIG_VECTOR_METRIC: z.enum(['cosine', 'euclidean', 'dot_product']),
   LUDWIG_VECTOR_GENERATION_ENDPOINT: z.url(),
   REPLICATE_API_TOKEN: z.string(),
+  CONVEX_DEPLOYMENT: z.string(),
   CONVEX_URL: z.string(),
   CONVEX_PRODUCT_ONBOARDING_API_KEY: z.string(),
 });
