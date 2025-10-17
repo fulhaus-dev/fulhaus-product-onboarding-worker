@@ -18,7 +18,7 @@ export async function getProductsBySkusService(skus: string[]) {
 }
 
 export async function createProductsService(data: CreateProduct[]) {
-  return await asyncTryCatch(() =>
+  return await asyncTryCatch<{ data: Product['_id'][] }>(() =>
     convexHttpClient.mutation(api.v1.product.mutation.createPoProducts, {
       poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
       data,

@@ -20,7 +20,7 @@ const outputSchema = z.object({
 });
 
 const systemPrompt = `
-You are an expert in generating the best product information for furniture products. Namely the name, description and category (from a provided category list). The Categories are standard, and the category that matches the product is what you should assign to the product. The descriptive name must not contain dimensions or weights or anything of that nature.
+You are an expert in generating the best product information for furniture products. Namely the name, description and category (from a provided category list). The Categories are standard, and the category that matches the product is what you should assign to the product. The descriptive name must not contain dimensions or weights or anything of that nature. The assigned Category MUST come from the following list (find the best match), must not be anything else, made up or spelling correcting, must be exactly one of the categories verbatim in the following list.
 
 Category list:
 ${productCategories.join('\n')}.

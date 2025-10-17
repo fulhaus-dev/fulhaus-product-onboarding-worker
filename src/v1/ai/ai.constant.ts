@@ -3,7 +3,7 @@ export const AI_PRODUCT_DATA_MAP_GENERATOR_FIELD_NAMES = [
     value: 'sku',
     required: true,
     description:
-      'The vendor field that represents a unique product identifier or code',
+      'The vendor field that represents the unique product identifier',
   },
   {
     value: 'itemId',

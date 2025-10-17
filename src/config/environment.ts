@@ -22,6 +22,13 @@ dotenv.config({ path: path.resolve(projectRoot, '.env'), override: false });
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production']).default('development'),
+  MAX_PROCESSING_BATCH: z.coerce.number(),
+  MAX_PROCESSING_QUEUE_SIZE: z.coerce.number(),
+  MAX_CATEGORIES: z.coerce.number(),
+  PROCESSOR_QUEUE_CHECK_WAIT_INTERVAL: z.coerce.number(),
+  VENDOR_NAME: z.string(),
+  VENDOR_ID: z.string(),
+  ALLOWED_VENDOR_FILES: z.string(),
   LOG_LEVEL: z
     .enum(['error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly'])
     .default('info'),
@@ -37,10 +44,6 @@ const envSchema = z.object({
   CONVEX_DEPLOYMENT: z.string(),
   CONVEX_URL: z.string(),
   CONVEX_PRODUCT_ONBOARDING_API_KEY: z.string(),
-  MAX_PROCESSING_BATCH: z.coerce.number(),
-  MAX_PROCESSING_QUEUE_SIZE: z.coerce.number(),
-  MAX_CATEGORIES: z.coerce.number(),
-  PROCESSOR_QUEUE_CHECK_WAIT_INTERVAL: z.coerce.number(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

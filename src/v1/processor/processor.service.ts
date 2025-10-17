@@ -1,3 +1,4 @@
+import { env } from '@worker/config/environment.js';
 import r2 from '@worker/utils/r2.js';
 import processFlatFileProductDataStream from '@worker/v1/processor/processor.file.stream/processor.file.stream.flat-file.js';
 import processSpreadsheetFileProductDataStream from '@worker/v1/processor/processor.file.stream/processor.file.stream.spreadsheet-file.js';
@@ -5,15 +6,9 @@ import processZipFileProductDataStream from '@worker/v1/processor/processor.file
 import { getVendorProductDataFileKeysThatCanBeProcessed } from '@worker/v1/processor/processor.util.js';
 import { type GenericId as Id } from 'convex/values';
 
-const allowedFiles = [
-  // 'wayfair/Fulhaus_AM.txt.zip',
-  // 'wayfair/Fulhaus_BL.txt.zip',
-  // 'wayfair/Fulhaus_JM.txt.zip',
-  // 'wayfair/Fulhaus_PG.txt.zip',
-  'wayfair/Fulhaus_WFCA.txt.zip',
-];
+const allowedFiles = env.ALLOWED_VENDOR_FILES.split(',').map((f) => f.trim());
 
-const vendorId = 'm9766yye02p7d4v26rvtjbs01s7r7y3a' as Id<'productVendors'>;
+const vendorId = env.VENDOR_ID as Id<'productVendors'>;
 
 export async function processVendorProductDataService(
   vendorProductDataR2FolderName: string

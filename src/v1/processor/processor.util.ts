@@ -215,7 +215,7 @@ export async function getProductsDimensionInfo(
     .map(
       (response) =>
         response.data ?? {
-          dimension: null,
+          dimension: undefined,
           width: null,
           height: null,
           depth: null,

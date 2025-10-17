@@ -57,40 +57,6 @@ export default async function processFlatFileProductDataStream({
       totalCount += lines.length;
     };
 
-    const processLines = async (lines: string[]) => {
-      if (!fileConfig) {
-        fileFieldMapLines.push(...lines);
-
-        if (fileFieldMapLines.length > 1) {
-          const { data, errorRecord } =
-            await productFileSimpleHeaderMapGeneratorAi(fileFieldMapLines);
-
-          if (errorRecord) {
-            error.sendErrorMessage({
-              ...errorRecord,
-              details: [
-                ...(errorRecord.details ?? []),
-                {
-                  function: 'productFileSimpleHeaderMapGeneratorAi',
-                  extract: fileFieldMapLines,
-                },
-              ],
-            });
-            stream.destroy();
-            reject(new Error('Failed to generate file config'));
-            return;
-          }
-
-          fileConfig = data;
-          await queueLinesWithBackpressure(fileFieldMapLines, fileConfig);
-          fileFieldMapLines = [];
-        }
-        return;
-      }
-
-      await queueLinesWithBackpressure(lines, fileConfig);
-    };
-
     stream.on('data', async (chunk) => {
       stream.pause();
 
@@ -98,12 +64,48 @@ export default async function processFlatFileProductDataStream({
       const lines = buffer.split(/\r\n|\n|\r/);
       buffer = lines.pop() || '';
 
-      if (lines.length > 0) await processLines(lines);
+      if (!fileConfig) fileFieldMapLines.push(...lines);
+
+      if (fileFieldMapLines.length > 1 && !fileConfig) {
+        const { data, errorRecord } =
+          await productFileSimpleHeaderMapGeneratorAi(fileFieldMapLines);
+
+        if (errorRecord) {
+          error.sendErrorMessage({
+            ...errorRecord,
+            details: [
+              ...(errorRecord.details ?? []),
+              {
+                function: 'productFileSimpleHeaderMapGeneratorAi',
+                extract: fileFieldMapLines,
+              },
+            ],
+          });
+          stream.destroy();
+          reject(new Error('Failed to generate file config'));
+          return;
+        }
+
+        fileConfig = data;
+        await queueLinesWithBackpressure(fileFieldMapLines, fileConfig);
+        fileFieldMapLines = [];
+
+        if (!isPaused) stream.resume();
+        return;
+      }
+
+      if (!fileConfig) {
+        if (!isPaused) stream.resume();
+        return;
+      }
+
+      if (lines.length > 0) await queueLinesWithBackpressure(lines, fileConfig);
 
       if (!isPaused) stream.resume();
     });
 
     stream.on('end', async () => {
+      // Process final buffer
       if (buffer.trim() && fileConfig) {
         await queueLinesWithBackpressure([buffer], fileConfig);
       }
@@ -114,9 +116,9 @@ export default async function processFlatFileProductDataStream({
       resolve();
     });
 
-    stream.on('error', (error) => {
-      logger.error(`Error processing ${fileName}: ${error.message}`);
-      reject(error);
+    stream.on('error', (err) => {
+      logger.error(`Error processing ${fileName}: ${err.message}`);
+      reject(err);
     });
   });
 }

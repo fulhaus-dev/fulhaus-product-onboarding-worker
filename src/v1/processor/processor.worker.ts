@@ -1,5 +1,6 @@
 import { env } from '@worker/config/environment.js';
 import { error } from '@worker/utils/error.js';
+import logger from '@worker/utils/logger.js';
 import uid from '@worker/utils/uid.js';
 import productInfoGeneratorAi from '@worker/v1/ai/ai.product-info-generator.js';
 import { FileConfig } from '@worker/v1/processor/processor.type.js';
@@ -12,6 +13,7 @@ import {
   getProductsTextEmbedding,
   getProductsWeightInfo,
 } from '@worker/v1/processor/processor.util.js';
+import { productCategories } from '@worker/v1/product/product.constant.js';
 import {
   createProductsService,
   getProductsBySkusService,
@@ -25,6 +27,8 @@ import {
 } from '@worker/v1/product/product.type.js';
 
 type CategoryCount = Record<ProductCategory, number>;
+
+let totalProcessed = 0;
 
 export let categoryCount: CategoryCount = {} as CategoryCount;
 
@@ -69,8 +73,8 @@ class ProductLinesQueue {
       // Force cleanup
       if (global.gc) global.gc();
 
-      // Add delay between batches to prevent 502 errors
-      await new Promise((resolve) => setTimeout(resolve, 500)); // 0.5 second delay
+      // // Add delay between batches to prevent 502 errors
+      // await new Promise((resolve) => setTimeout(resolve, 500)); // 0.5 second delay
     }
 
     this.isProcessing = false;
@@ -93,6 +97,8 @@ async function processProductLines(
   fileConfig: FileConfig,
   idArgs: { vendorId: string; ownerId?: string }
 ) {
+  console.log('start processProductLines', productDataLines.length);
+
   let initialBaseProductsWithMainImageUrlAndIsoCodeInfo =
     await getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
       productDataLines,
@@ -151,7 +157,7 @@ async function processProductLines(
     )
   );
 
-  const baseProducts = initialBaseProductsWithMainImageUrlAndIsoCodeInfo
+  let baseProducts = initialBaseProductsWithMainImageUrlAndIsoCodeInfo
     .map((initialBaseProductWithMainImageUrlAndIsoCodeInfo, index) => ({
       ...initialBaseProductWithMainImageUrlAndIsoCodeInfo,
       name: productInfoResponses[index].data?.name,
@@ -160,17 +166,14 @@ async function processProductLines(
     }))
     .filter(
       (baseProduct) =>
-        baseProduct.name !== undefined &&
-        baseProduct.description !== undefined &&
-        baseProduct.category !== undefined &&
+        !!baseProduct.sku &&
+        !!baseProduct.name &&
+        !!baseProduct.description &&
+        !!baseProduct.category &&
+        productCategories.includes(baseProduct.category) &&
         (categoryCount[baseProduct.category] ?? 0) <= env.MAX_CATEGORIES
     ) as BaseProduct[];
   if (baseProducts.length < 1) return;
-
-  for (const baseProduct of baseProducts) {
-    const currentCategoryCount = categoryCount[baseProduct.category] ?? 0;
-    categoryCount[baseProduct.category] = currentCategoryCount + 1;
-  }
 
   const baseProductsLine = baseProducts.map((baseProduct) => baseProduct.line);
 
@@ -239,6 +242,7 @@ async function processProductLines(
     (productWithoutTextEmbedding, index) => {
       if (!productsTextEmbedding[index]) return;
       if (!productWithoutTextEmbedding.currencyCode) return;
+      if (!productWithoutTextEmbedding.dimension) return;
 
       const warehouseCountryCodes =
         productWithoutTextEmbedding.warehouseCountryCodes ?? [];
@@ -267,8 +271,16 @@ async function processProductLines(
   const products = productsWithUndefinedRequiredValues.filter(
     (product) => product !== undefined
   ) as CreateProduct[];
+  if (products.length < 1) return;
 
-  const { errorRecord } = await createProductsService(products);
+  console.log('products', products);
+
+  for (const product of products) {
+    const currentCategoryCount = categoryCount[product.category] ?? 0;
+    categoryCount[product.category] = currentCategoryCount + 1;
+  }
+
+  const { data: response, errorRecord } = await createProductsService(products);
   if (errorRecord)
     error.sendErrorMessage({
       ...errorRecord,
@@ -280,6 +292,12 @@ async function processProductLines(
         },
       ],
     });
+
+  const productsProcessed = response?.data.length ?? 0;
+
+  totalProcessed += productsProcessed;
+
+  logger.info(`📦 Processed ${productsProcessed} of ${totalProcessed}`);
 }
 
 async function updateExistingProductPriceInfo(
