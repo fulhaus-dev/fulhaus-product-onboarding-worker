@@ -16,6 +16,7 @@ import {
   ProductDataDimensionUnit,
   ProductDataWeightUnit,
 } from '@worker/v1/processor/processor.type.js';
+import { getProductsBySkusService } from '@worker/v1/product/product.service.js';
 import {
   BaseProduct,
   ProductDimensionInfo,
@@ -141,8 +142,39 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
     return res;
   });
 
-  const sanitizedInitialBaseProducts = initialBaseProducts.filter(
+  let sanitizedInitialBaseProducts = initialBaseProducts.filter(
     (sanitizedInitialBaseProduct) => !!sanitizedInitialBaseProduct
+  );
+  if (sanitizedInitialBaseProducts.length < 1) return [];
+
+  const currentSkus = sanitizedInitialBaseProducts.map(
+    (sanitizedInitialBaseProduct) => sanitizedInitialBaseProduct.sku
+  );
+
+  const { data: existingProductSkusResponse } = await getProductsBySkusService(
+    currentSkus
+  );
+
+  const existingProducts = sanitizedInitialBaseProducts
+    .map((initialBaseProductWithMainImageUrlAndIsoCodeInfo) => {
+      const existingProduct = existingProductSkusResponse?.data?.find(
+        (existingProduct) =>
+          existingProduct?.sku ===
+          initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+      );
+      if (!existingProduct) return;
+
+      return existingProduct;
+    })
+    .filter((existingProduct) => existingProduct !== undefined);
+
+  sanitizedInitialBaseProducts = sanitizedInitialBaseProducts.filter(
+    (initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
+      !existingProducts.some(
+        (existingProduct) =>
+          existingProduct.sku ===
+          initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+      )
   );
   if (sanitizedInitialBaseProducts.length < 1) return [];
 
