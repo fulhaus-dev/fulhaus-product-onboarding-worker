@@ -74,6 +74,11 @@ export type CreateProduct =
 export type UpdateProduct =
   PublicApiType['v1']['product']['mutation']['updatePoProductsById']['_args']['data'][0];
 
-export type Product = { _id: GenericId<'products'> } & CreateProduct;
+export type Product = {
+  _id: GenericId<'products'>;
+} & CreateProduct['productData'];
 
 export type ProductCategoryCount = Record<ProductCategory, number>;
+
+export type ProductInfo = CreateProduct['productData'] &
+  CreateProduct['embeddingData'];
