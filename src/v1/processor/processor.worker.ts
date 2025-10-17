@@ -102,7 +102,6 @@ async function processProductLines(
       await getProductCategoryCountAggregateService();
 
     const productCategoryCount = categoryCountResponse?.data;
-    console.log('productCategoryCount', productCategoryCount);
     if (productCategoryCount) categoryCount = productCategoryCount;
   }
 
