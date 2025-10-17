@@ -48,8 +48,8 @@ export default async function productMainImageDetectorAi(imageUrls: string[]) {
           .boolean()
           .describe('Whether the detected main image has a white background'),
         noMainImage: z
-          .optional(z.literal(true))
-          .describe('Whether no main image is detected, optional if false'),
+          .optional(z.boolean().default(false))
+          .describe('Whether no main image is detected'),
       }),
       messages: [
         {

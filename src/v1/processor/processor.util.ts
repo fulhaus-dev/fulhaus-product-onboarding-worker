@@ -114,9 +114,9 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
     const sku = dataObj[fileConfig.map.sku];
     if (!sku) return undefined;
 
-    return {
+    const res = {
       line: row,
-      sku: dataObj[fileConfig.map.sku],
+      sku,
       itemId: dataObj[fileConfig.map.itemId ?? 'NA'],
       gtin: dataObj[fileConfig.map.gtin ?? 'NA'],
       mpn: dataObj[fileConfig.map.mpn ?? 'NA'],
@@ -137,11 +137,14 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
       restockDate,
       imageUrls,
     };
+
+    return res;
   });
 
   const sanitizedInitialBaseProducts = initialBaseProducts.filter(
     (sanitizedInitialBaseProduct) => !!sanitizedInitialBaseProduct
   );
+  if (sanitizedInitialBaseProducts.length < 1) return [];
 
   const [productMainImageDetectorAiResponses, productsIsoCodeInfo] =
     await Promise.all([
