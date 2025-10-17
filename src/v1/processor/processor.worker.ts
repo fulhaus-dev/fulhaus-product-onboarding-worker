@@ -29,6 +29,7 @@ import {
 type CategoryCount = Record<ProductCategory, number>;
 
 let totalProcessed = 0;
+let totalRemoved = 0;
 
 export let categoryCount: CategoryCount = {} as CategoryCount;
 
@@ -97,13 +98,16 @@ async function processProductLines(
   fileConfig: FileConfig,
   idArgs: { vendorId: string; ownerId?: string }
 ) {
-  console.log('start processProductLines', productDataLines.length);
-
   let initialBaseProductsWithMainImageUrlAndIsoCodeInfo =
     await getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
       productDataLines,
       fileConfig
     );
+  totalRemoved +=
+    productDataLines.length -
+    initialBaseProductsWithMainImageUrlAndIsoCodeInfo.length;
+  logger.info(`📦 Total removed ${totalRemoved}.`);
+
   if (initialBaseProductsWithMainImageUrlAndIsoCodeInfo.length < 1) return;
 
   const currentSkus = initialBaseProductsWithMainImageUrlAndIsoCodeInfo.map(
@@ -273,8 +277,6 @@ async function processProductLines(
   ) as CreateProduct[];
   if (products.length < 1) return;
 
-  console.log('products', products);
-
   for (const product of products) {
     const currentCategoryCount = categoryCount[product.category] ?? 0;
     categoryCount[product.category] = currentCategoryCount + 1;
@@ -297,7 +299,9 @@ async function processProductLines(
 
   totalProcessed += productsProcessed;
 
-  logger.info(`📦 Processed ${productsProcessed} of ${totalProcessed}`);
+  logger.info(
+    `📦 Completed ${productsProcessed}. Total processed ${totalProcessed}`
+  );
 }
 
 async function updateExistingProductPriceInfo(
