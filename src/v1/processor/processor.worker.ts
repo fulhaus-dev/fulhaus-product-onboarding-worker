@@ -22,9 +22,9 @@ import {
 } from '@worker/v1/product/product.service.js';
 import {
   BaseProduct,
-  CreateProduct,
   Product,
   ProductCategoryCount,
+  ProductInfo,
 } from '@worker/v1/product/product.type.js';
 
 let totalProcessed = 0;
@@ -102,6 +102,7 @@ async function processProductLines(
       await getProductCategoryCountAggregateService();
 
     const productCategoryCount = categoryCountResponse?.data;
+    console.log('productCategoryCount', productCategoryCount);
     if (productCategoryCount) categoryCount = productCategoryCount;
   }
 
@@ -277,11 +278,11 @@ async function processProductLines(
         line: undefined,
       };
     }
-  ) as (CreateProduct | undefined)[];
+  ) as (ProductInfo | undefined)[];
 
   const products = productsWithUndefinedRequiredValues.filter(
     (product) => product !== undefined
-  ) as CreateProduct[];
+  ) as ProductInfo[];
   if (products.length < 1) return;
 
   for (const product of products) {
@@ -289,7 +290,19 @@ async function processProductLines(
     categoryCount[product.category] = currentCategoryCount + 1;
   }
 
-  const { data: response, errorRecord } = await createProductsService(products);
+  const { data: response, errorRecord } = await createProductsService(
+    products.map((product) => {
+      const { imageEmbedding, textEmbedding, ...productData } = product;
+
+      return {
+        productData,
+        embeddingData: {
+          imageEmbedding,
+          textEmbedding,
+        },
+      };
+    })
+  );
   if (errorRecord)
     error.sendErrorMessage({
       ...errorRecord,
