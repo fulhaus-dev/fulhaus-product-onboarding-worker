@@ -72,14 +72,17 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
     fileConfig
   );
 
-  const initialBaseProducts: Omit<
-    BaseProduct,
-    | 'mainImageUrl'
-    | 'category'
-    | 'currencyCode'
-    | 'warehouseCountryCodes'
-    | 'shippingCountryCodes'
-  >[] = contents.map((row) => {
+  const initialBaseProducts: (
+    | Omit<
+        BaseProduct,
+        | 'mainImageUrl'
+        | 'category'
+        | 'currencyCode'
+        | 'warehouseCountryCodes'
+        | 'shippingCountryCodes'
+      >
+    | undefined
+  )[] = contents.map((row) => {
     const values = row.split(fileConfig.delimiter);
     const dataObj = Object.fromEntries(headers.map((h, i) => [h, values[i]]));
 
@@ -99,6 +102,18 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 
     const imageUrls = extractProductImageUrls(row);
 
+    const stockQty = parseInt(dataObj[fileConfig.map.stockQty ?? '0']);
+    const restockDate = fileConfig.map.restockDate
+      ? new Date(dataObj[fileConfig.map.restockDate])
+      : undefined;
+    if (!restockDate && stockQty < 1) return undefined;
+
+    const tradePrice = parseFloat(dataObj[fileConfig.map.tradePrice]);
+    if (!tradePrice) return undefined;
+
+    const sku = dataObj[fileConfig.map.sku];
+    if (!sku) return undefined;
+
     return {
       line: row,
       sku: dataObj[fileConfig.map.sku],
@@ -109,7 +124,7 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
       name: dataObj[fileConfig.map.name],
       description: dataObj[fileConfig.map.description],
       pdpLink: dataObj[fileConfig.map.pdpLink ?? 'NA'],
-      tradePrice: parseFloat(dataObj[fileConfig.map.tradePrice]),
+      tradePrice,
       map: isNaN(map) ? undefined : map <= 0 ? undefined : map,
       msrp: isNaN(msrp) ? undefined : msrp <= 0 ? undefined : msrp,
       shippingPrice: isNaN(shippingPrice)
@@ -118,18 +133,20 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
         ? undefined
         : shippingPrice,
       unitPerBox: isNaN(unitPerBox) ? 1 : unitPerBox < 1 ? 1 : unitPerBox,
-      stockQty: parseInt(dataObj[fileConfig.map.stockQty ?? '0']),
-      restockDate: fileConfig.map.restockDate
-        ? new Date(dataObj[fileConfig.map.restockDate])
-        : undefined,
+      stockQty,
+      restockDate,
       imageUrls,
     };
   });
 
+  const sanitizedInitialBaseProducts = initialBaseProducts.filter(
+    (sanitizedInitialBaseProduct) => !!sanitizedInitialBaseProduct
+  );
+
   const [productMainImageDetectorAiResponses, productsIsoCodeInfo] =
     await Promise.all([
       Promise.all(
-        initialBaseProducts.map((initialBaseProduct) =>
+        sanitizedInitialBaseProducts.map((initialBaseProduct) =>
           productMainImageDetectorAi(initialBaseProduct.imageUrls)
         )
       ),
@@ -137,7 +154,7 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
     ]);
 
   const initialBaseProductsWithMainImageUrlAndIsoCodeInfo =
-    initialBaseProducts.map((initialBaseProduct, index) => {
+    sanitizedInitialBaseProducts.map((initialBaseProduct, index) => {
       const mainImageHasSolidBackground =
         !!productMainImageDetectorAiResponses[index].data?.hasWhiteBackground;
 
