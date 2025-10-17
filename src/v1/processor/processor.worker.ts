@@ -16,6 +16,7 @@ import {
 import { productCategories } from '@worker/v1/product/product.constant.js';
 import {
   createProductsService,
+  getProductCategoryCountAggregateService,
   getProductsBySkusService,
   updateProductsByIdService,
 } from '@worker/v1/product/product.service.js';
@@ -23,15 +24,13 @@ import {
   BaseProduct,
   CreateProduct,
   Product,
-  ProductCategory,
+  ProductCategoryCount,
 } from '@worker/v1/product/product.type.js';
-
-type CategoryCount = Record<ProductCategory, number>;
 
 let totalProcessed = 0;
 let totalRemoved = 0;
 
-export let categoryCount: CategoryCount = {} as CategoryCount;
+let categoryCount = {} as ProductCategoryCount;
 
 class ProductLinesQueue {
   private queue: string[] = [];
@@ -98,6 +97,14 @@ async function processProductLines(
   fileConfig: FileConfig,
   idArgs: { vendorId: string; ownerId?: string }
 ) {
+  if (Object.keys(categoryCount).length > 0) {
+    const { data: categoryCountResponse } =
+      await getProductCategoryCountAggregateService();
+
+    const productCategoryCount = categoryCountResponse?.data;
+    if (productCategoryCount) categoryCount = productCategoryCount;
+  }
+
   let initialBaseProductsWithMainImageUrlAndIsoCodeInfo =
     await getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
       productDataLines,
