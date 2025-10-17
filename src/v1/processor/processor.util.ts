@@ -156,7 +156,8 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
   const initialBaseProductsWithMainImageUrlAndIsoCodeInfo =
     sanitizedInitialBaseProducts.map((initialBaseProduct, index) => {
       const mainImageHasSolidBackground =
-        !!productMainImageDetectorAiResponses[index].data?.hasWhiteBackground;
+        !!productMainImageDetectorAiResponses[index].data?.hasWhiteBackground &&
+        !productMainImageDetectorAiResponses[index].data.noMainImage;
 
       const mainImageIndex = Number(
         productMainImageDetectorAiResponses[index].data?.mainImageImageIndex ??
