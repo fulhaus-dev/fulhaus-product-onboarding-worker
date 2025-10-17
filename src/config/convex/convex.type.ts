@@ -1961,6 +1961,12 @@ export type PublicApiType = {
           { poApiKey: string; skus: Array<string> },
           any
         >;
+        getProductCategoryCountAggregate: FunctionReference<
+          "query",
+          "public",
+          { poApiKey: string },
+          any
+        >;
         getProductCategories: FunctionReference<"query", "public", any, any>;
         getProductCategoriesForSpace: FunctionReference<
           "query",

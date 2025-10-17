@@ -5,8 +5,20 @@ import { asyncTryCatch } from '@worker/utils/try-catch.js';
 import {
   CreateProduct,
   Product,
+  ProductCategoryCount,
   UpdateProduct,
 } from '@worker/v1/product/product.type.js';
+
+export async function getProductCategoryCountAggregateService() {
+  return await asyncTryCatch<{ data: ProductCategoryCount }>(() =>
+    convexHttpClient.query(
+      api.v1.product.query.getProductCategoryCountAggregate,
+      {
+        poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
+      }
+    )
+  );
+}
 
 export async function getProductsBySkusService(skus: string[]) {
   return await asyncTryCatch<{ data: Product[] }>(() =>
