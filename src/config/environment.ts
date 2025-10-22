@@ -35,12 +35,9 @@ const envSchema = z.object({
 	LUDWIG_VECTOR_DIM: z.coerce.number().int().positive(),
 	LUDWIG_VECTOR_METRIC: z.enum(["cosine", "euclidean", "dot_product"]),
 	LUDWIG_VECTOR_GENERATION_ENDPOINT: z.url(),
-	REPLICATE_API_TOKEN: z.string(),
 	CONVEX_DEPLOYMENT: z.string(),
 	CONVEX_URL: z.string(),
 	CONVEX_PRODUCT_ONBOARDING_API_KEY: z.string(),
-	ANTHROPIC_API_KEY: z.string(),
-	WAYFAIR_BESTSELLER_ITEMS_GROUP_IDS: z.string(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
