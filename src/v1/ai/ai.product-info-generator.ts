@@ -34,6 +34,8 @@ Your SOLE task is to provide the best name and description for a product that is
  - If product is toys, do not assign a category.
  - If product is for flooring or wall tiles, do not assign a category.
  - If product is for special occasions, like Christmas, Easter, Halloweens etc, do not assign a category.
+ - If the image is an electronic appliance, like Fridge, TV, Microwave, Dryer, Vacuum, laptop etc, do not assign a category.
+ - If the image is a light bulb, do not assign a category.
 `;
 
 export default async function productInfoGeneratorAi(args: {

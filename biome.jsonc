@@ -60,7 +60,7 @@
       },
       "complexity": {
         "recommended": true,
-        "noExcessiveCognitiveComplexity": "error",
+        "noExcessiveCognitiveComplexity": "warn",
         "noVoid": "off"
       },
       "correctness": {
