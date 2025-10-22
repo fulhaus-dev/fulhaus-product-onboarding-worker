@@ -1,28 +1,22 @@
-import { ProcessorErrorRecord } from '@worker/shared/shared.type.js';
-import z from 'zod';
+import type { ProcessorErrorRecord } from "@worker/shared/shared.type.js";
+import z from "zod";
 
 function zodErrorMessage(zodError: z.ZodError) {
-  return z.prettifyError(zodError);
+	return z.prettifyError(zodError);
 }
 
 function exceptionErrorRecord(error: unknown) {
-  const errorRecord: ProcessorErrorRecord = {
-    message: 'An unknown error occurred',
-  };
+	const errorRecord: ProcessorErrorRecord = {
+		message: "An unknown error occurred",
+	};
 
-  // Check if the error is an instance of Error
-  if (error instanceof Error) errorRecord.message = error.message;
+	// Check if the error is an instance of Error
+	if (error instanceof Error) errorRecord.message = error.message;
 
-  return errorRecord;
-}
-
-function sendErrorMessage(errorRecord: ProcessorErrorRecord) {
-  // TODO Handle Slack Error
-  // console.error(JSON.stringify(errorRecord, null, 2));
+	return errorRecord;
 }
 
 export const error = {
-  zodErrorMessage,
-  exceptionErrorRecord,
-  sendErrorMessage,
+	zodErrorMessage,
+	exceptionErrorRecord,
 };

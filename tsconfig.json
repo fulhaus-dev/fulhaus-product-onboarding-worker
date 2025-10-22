@@ -17,6 +17,6 @@
     "allowSyntheticDefaultImports": true,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "src/**/*.json"],
+  "include": ["src/**/*.ts", "src/**/*.json", "local/rep-test.ts"],
   "exclude": ["node_modules", "dist", "tests"]
 }
