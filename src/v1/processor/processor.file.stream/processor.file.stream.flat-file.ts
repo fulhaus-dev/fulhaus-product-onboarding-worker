@@ -1,130 +1,99 @@
-import type { Readable } from "stream";
-
-import { env } from "@worker/config/environment.js";
-import logger from "@worker/utils/logger.js";
-import productFileSimpleHeaderMapGeneratorAi from "@worker/v1/ai/ai.product-file-simple-header-map-generator.js";
-import type { FileConfig } from "@worker/v1/processor/processor.type.js";
-import processProductLinesWorker, { productQueue } from "@worker/v1/processor/processor.worker.js";
-import { logProductErrorService } from "@worker/v1/product/product.service.js";
+import logger from '@worker/utils/logger.js';
+import productFileSimpleHeaderMapGeneratorAi from '@worker/v1/ai/ai.product-file-simple-header-map-generator.js';
+import { FileConfig } from '@worker/v1/processor/processor.type.js';
+import processProductLinesWorker, {
+  doneLoadingProducts,
+} from '@worker/v1/processor/processor.worker.js';
+import { logProductErrorService } from '@worker/v1/product/product.service.js';
 
 export default async function processFlatFileProductDataStream({
-	flatFileStream,
-	vendorId,
-	ownerId,
-	fileName,
+  flatFileStream,
+  vendorId,
+  ownerId,
+  fileName,
 }: {
-	flatFileStream: NodeJS.ReadableStream;
-	vendorId: string;
-	ownerId?: string;
-	fileName: string;
+  flatFileStream: NodeJS.ReadableStream;
+  vendorId: string;
+  ownerId?: string;
+  fileName: string;
 }) {
-	logger.info(`✅ Started processing lines from ${fileName} for vendor ${vendorId}`);
+  logger.info(
+    `✅ Started processing lines from ${fileName} for vendor ${vendorId}`
+  );
 
-	return new Promise<void>((resolve, reject) => {
-		let totalCount = 0;
-		let buffer = "";
-		let fileFieldMapLines: string[] = [];
-		let fileConfig: FileConfig | null = null;
-		let isPaused = false;
+  let totalCount = 0;
+  let buffer = '';
+  let fileFieldMapLines: string[] = [];
+  let fileConfig: FileConfig | null = null;
 
-		const stream = flatFileStream as Readable;
+  for await (const chunk of flatFileStream) {
+    buffer += chunk.toString('utf8');
 
-		// Helper function to queue lines with backpressure handling
-		const queueLinesWithBackpressure = async (
-			lines: string[],
-			config: FileConfig
-		): Promise<void> => {
-			const accepted = processProductLinesWorker(lines, config, {
-				vendorId,
-				ownerId,
-			});
+    // Split by newlines and process
+    const lines = buffer.split(/\r\n|\n|\r/);
+    buffer = lines.pop() || '';
 
-			if (!accepted) {
-				stream.pause();
-				isPaused = true;
-				await waitForQueueSpace();
-				isPaused = false;
-				processProductLinesWorker(lines, config, {
-					vendorId,
-					ownerId,
-				});
-				stream.resume();
-			}
+    if (!fileConfig) fileFieldMapLines.push(...lines);
 
-			totalCount += lines.length;
-		};
+    if (fileFieldMapLines.length > 1 && !fileConfig) {
+      const { data, errorRecord } = await productFileSimpleHeaderMapGeneratorAi(
+        fileFieldMapLines
+      );
 
-		stream.on("data", async (chunk) => {
-			stream.pause();
+      if (errorRecord) {
+        logProductErrorService({
+          ...errorRecord,
+          details: [
+            ...(errorRecord.details ?? []),
+            {
+              function: 'productFileSimpleHeaderMapGeneratorAi',
+              extract: fileFieldMapLines,
+            },
+          ],
+        });
+        return;
+      }
 
-			buffer += chunk.toString("utf8");
-			const lines = buffer.split(/\r\n|\n|\r/);
-			buffer = lines.pop() || "";
+      fileConfig = data;
 
-			if (!fileConfig) fileFieldMapLines.push(...lines);
+      processProductLinesWorker(fileFieldMapLines, fileConfig, {
+        vendorId,
+        ownerId,
+      });
 
-			if (fileFieldMapLines.length > 1 && !fileConfig) {
-				const { data, errorRecord } =
-					await productFileSimpleHeaderMapGeneratorAi(fileFieldMapLines);
+      totalCount += fileFieldMapLines.length;
 
-				if (errorRecord) {
-					logProductErrorService({
-						...errorRecord,
-						details: [
-							...(errorRecord.details ?? []),
-							{
-								function: "productFileSimpleHeaderMapGeneratorAi",
-								extract: fileFieldMapLines,
-							},
-						],
-					});
-					stream.destroy();
-					reject(new Error("Failed to generate file config"));
-					return;
-				}
+      fileFieldMapLines = [];
 
-				fileConfig = data;
-				await queueLinesWithBackpressure(fileFieldMapLines, fileConfig);
-				fileFieldMapLines = [];
+      continue;
+    }
 
-				if (!isPaused) stream.resume();
-				return;
-			}
+    if (!fileConfig) continue;
 
-			if (!fileConfig) {
-				if (!isPaused) stream.resume();
-				return;
-			}
+    processProductLinesWorker(lines, fileConfig, {
+      vendorId,
+      ownerId,
+    });
 
-			if (lines.length > 0) await queueLinesWithBackpressure(lines, fileConfig);
+    totalCount += lines.length;
+  }
 
-			if (!isPaused) stream.resume();
-		});
+  if (buffer.trim() && fileConfig) {
+    processProductLinesWorker([buffer], fileConfig, {
+      vendorId,
+      ownerId,
+    });
 
-		stream.on("end", async () => {
-			// Process final buffer
-			if (buffer.trim() && fileConfig) {
-				await queueLinesWithBackpressure([buffer], fileConfig);
-			}
+    totalCount += 1;
+  }
 
-			logger.info(`✅ Completed ${totalCount} lines from ${fileName} for vendor ${vendorId}`);
-			resolve();
-		});
+  logger.info(
+    `✅ Completed ${totalCount} lines from ${fileName} for vendor ${vendorId}`
+  );
 
-		stream.on("error", (err) => {
-			logger.error(`Error processing ${fileName}: ${err.message}`);
-			reject(err);
-		});
-	});
-}
-
-async function waitForQueueSpace(): Promise<void> {
-	return new Promise((resolve) => {
-		const checkInterval = setInterval(() => {
-			if (productQueue.hasSpace()) {
-				clearInterval(checkInterval);
-				resolve();
-			}
-		}, env.PROCESSOR_QUEUE_CHECK_WAIT_INTERVAL);
-	});
+  if (fileConfig)
+    await doneLoadingProducts(fileConfig, {
+      vendorId,
+      ownerId,
+    });
 }

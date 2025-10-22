@@ -1,5 +1,4 @@
 import { env } from '@worker/config/environment.js';
-import { error } from '@worker/utils/error.js';
 import logger from '@worker/utils/logger.js';
 import uid from '@worker/utils/uid.js';
 import productInfoGeneratorAi from '@worker/v1/ai/ai.product-info-generator.js';
@@ -28,112 +27,94 @@ let totalProcessed = 0;
 let totalRemoved = 0;
 let categoryCount = {} as ProductCategoryCount;
 
-class ProductLinesQueue {
-  private queue: string[] = [];
-  private isProcessing = false;
-  private fileConfig: FileConfig | null = null;
-  private idArgs: { vendorId: string; ownerId?: string } | null = null;
+let queue: string[] = [];
 
-  // Add lines to the queue (called when new lines come in)
-  addLines(
-    lines: string[],
-    fileConfig: FileConfig,
-    idArgs: { vendorId: string; ownerId?: string }
-  ) {
-    if (this.queue.length + lines.length > env.MAX_PROCESSING_QUEUE_SIZE) {
-      return false;
-    }
+// class ProductLinesQueue {
+//   private queue: string[] = [];
+//   private isProcessing = false;
+//   private fileConfig: FileConfig | null = null;
+//   private idArgs: { vendorId: string; ownerId?: string } | null = null;
 
-    this.queue.push(...lines);
-    this.fileConfig = fileConfig;
-    this.idArgs = idArgs;
+//   // Add lines to the queue (called when new lines come in)
+//   addLines(
+//     lines: string[],
+//     fileConfig: FileConfig,
+//     idArgs: { vendorId: string; ownerId?: string }
+//   ) {
+//     this.queue.push(...lines);
+//     this.fileConfig = fileConfig;
+//     this.idArgs = idArgs;
 
-    // Start processing if not already running
-    if (!this.isProcessing) {
-      this.processQueue().catch((err) => {
-        logger.error('Queue processing error:', err);
-        // Don't throw here, just log the error
-      });
-    }
+//     // Start processing if not already running
+//     if (!this.isProcessing) this.processQueue();
+//   }
 
-    return true;
-  }
+//   private async processQueue() {
+//     this.isProcessing = true;
 
-  hasSpace(): boolean {
-    return this.queue.length < env.MAX_PROCESSING_QUEUE_SIZE;
-  }
+//     // for (const queue of this.queue){
+//     const batch = this.queue.splice(0, env.MAX_PROCESSING_BATCH);
+//     await processProductLines(batch, this.fileConfig!, this.idArgs!);
+//     // }
+//     // while (this.queue.length > 0) {
+//     //   // Take next 20 (or less) from queue
+//     //   const batch = this.queue.splice(0, env.MAX_PROCESSING_BATCH);
 
-  getQueueSize(): number {
-    return this.queue.length;
-  }
+//     //   // Process this batch and wait for completion
+//     //   await processProductLines(batch, this.fileConfig!, this.idArgs!);
 
-  private async processQueue() {
-    this.isProcessing = true;
+//     //   //   // Force cleanup
+//     //   //   if (global.gc) global.gc();
 
-    try {
-      while (this.queue.length > 0) {
-        // Take next batch from queue
-        const batch = this.queue.splice(0, env.MAX_PROCESSING_BATCH);
+//     //   //   // Add delay between batches to prevent 502 errors
+//     //   //   await new Promise((resolve) => setTimeout(resolve, 500)); // 0.5 second delay
+//     // }
 
-        // Process this batch and wait for completion
-        await processProductLines(batch, this.fileConfig!, this.idArgs!);
+//     // if (this.queue.length < 1) this.isProcessing = false;
+//   }
+// }
 
-        // Force cleanup
-        if (global.gc) global.gc();
+// // Create global queue instance
+// const productQueue = new ProductLinesQueue();
 
-        // Log progress periodically
-        if (totalProcessed % 500 === 0) {
-          logger.info(`📦 Queue status: ${this.queue.length} lines remaining`);
-        }
-      }
-    } catch (err) {
-      const errorRecord = error.exceptionErrorRecord(err);
-      logger.error(`Error in queue processing: ${errorRecord.message}`);
-      // Continue processing despite errors in individual batches
-    } finally {
-      this.isProcessing = false;
-    }
-  }
-
-  // Method to check if processing is complete
-  isComplete(): boolean {
-    return !this.isProcessing && this.queue.length === 0;
-  }
-
-  // Method to wait for completion
-  async waitForCompletion(timeoutMs: number = 300000): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (this.isComplete()) {
-        resolve();
-        return;
-      }
-
-      const timeout = setTimeout(() => {
-        reject(new Error(`Queue processing timeout after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      const checkCompletion = () => {
-        if (this.isComplete()) {
-          clearTimeout(timeout);
-          clearInterval(interval);
-          resolve();
-        }
-      };
-
-      const interval = setInterval(checkCompletion, 1000);
-    });
-  }
-}
-
-// Create global queue instance
-export const productQueue = new ProductLinesQueue();
+// export default function processProductLinesWorker(
+//   productDataLines: string[],
+//   fileConfig: FileConfig,
+//   idArgs: { vendorId: string; ownerId?: string }
+// ) {
+//   productQueue.addLines(productDataLines, fileConfig, idArgs);
+// }
 
 export default function processProductLinesWorker(
   productDataLines: string[],
   fileConfig: FileConfig,
   idArgs: { vendorId: string; ownerId?: string }
 ) {
-  return productQueue.addLines(productDataLines, fileConfig, idArgs);
+  fileConfig = fileConfig;
+  idArgs = idArgs;
+
+  queue.push(...productDataLines);
+}
+
+function batchedQueue() {
+  const batches = [];
+  for (let i = 0; i < queue.length; i += env.MAX_PROCESSING_BATCH) {
+    batches.push(queue.slice(i, i + env.MAX_PROCESSING_BATCH));
+  }
+
+  queue = [];
+  return batches;
+}
+
+export async function doneLoadingProducts(
+  fileConfig: FileConfig,
+  idArgs: { vendorId: string; ownerId?: string }
+) {
+  const batches = batchedQueue();
+
+  for (const batch of batches) {
+    await processProductLines(batch, fileConfig, idArgs);
+  }
 }
 
 async function processProductLines(
