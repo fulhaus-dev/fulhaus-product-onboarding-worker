@@ -1,23 +1,14 @@
 import conversion from "@worker/utils/conversion.js";
-import { error } from "@worker/utils/error.js";
-import { asyncTryCatch } from "@worker/utils/try-catch.js";
-import productDimensionInfoGeneratorAi from "@worker/v1/ai/ai.product-dimension-info-generator.js";
 import { productImageEmbeddingGeneratorAi } from "@worker/v1/ai/ai.product-image-embedding-generator.js";
-import productIsoCodeInfoGeneratorAi from "@worker/v1/ai/ai.product-iso-code-info-generator.js";
 import productMainImageDetectorAi from "@worker/v1/ai/ai.product-main-image-detector.js";
+import productMetricInfoGeneratorAi from "@worker/v1/ai/ai.product-metric-info-generator.js";
 import productStyleInfoGeneratorAi from "@worker/v1/ai/ai.product-style-info-generator.js";
-import { productTextEmbeddingGeneratorAi } from "@worker/v1/ai/ai.product-text-embedding-generator.js";
-import productWeightInfoGeneratorAi from "@worker/v1/ai/ai.product-weight-info-generator.js";
 import {
 	FLAT_FILE_EXTS_TO_PROCESS,
 	SPREADSHEET_FILE_EXTS_TO_PROCESS,
 	ZIP_FILE_EXTS_TO_PROCESS,
 } from "@worker/v1/processor/processor.constant.js";
-import type {
-	FileConfig,
-	ProductDataDimensionUnit,
-	ProductDataWeightUnit,
-} from "@worker/v1/processor/processor.type.js";
+import type { FileConfig } from "@worker/v1/processor/processor.type.js";
 import {
 	getProductsBySkusService,
 	logProductErrorService,
@@ -80,76 +71,143 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 
 	const { headers, contents } = getProductHeadersAndContents(validProductDataLines, fileConfig);
 
-	const initialBaseProducts: (
-		| Omit<
-				BaseProduct,
-				| "mainImageUrl"
-				| "category"
-				| "currencyCode"
-				| "warehouseCountryCodes"
-				| "shippingCountryCodes"
-		  >
-		| undefined
-	)[] = contents.map((row) => {
-		const values = row.split(fileConfig.delimiter);
-		const dataObj = Object.fromEntries(headers.map((h, i) => [h, values[i]]));
-
-		const map = fileConfig.map.map ? parseFloat(dataObj[fileConfig.map.map]) : NaN;
-
-		const msrp = fileConfig.map.msrp ? parseFloat(dataObj[fileConfig.map.msrp]) : NaN;
-
-		const shippingPrice = fileConfig.map.shippingPrice
-			? parseFloat(dataObj[fileConfig.map.shippingPrice])
-			: NaN;
-
-		const unitPerBox = parseInt(dataObj[fileConfig.map.unitPerBox ?? "1"]);
-
-		const imageUrls = extractProductImageUrls(row);
-
-		const stockQty = parseInt(dataObj[fileConfig.map.stockQty ?? "0"]);
-		const restockDate = fileConfig.map.restockDate
-			? new Date(dataObj[fileConfig.map.restockDate])
-			: undefined;
-		if (!restockDate && stockQty < 1) return undefined;
-
-		const tradePrice = parseFloat(dataObj[fileConfig.map.tradePrice]);
-		if (!tradePrice) return undefined;
-
-		const sku = dataObj[fileConfig.map.sku];
-		if (!sku) return undefined;
-
-		const res = {
-			line: row,
-			sku,
-			itemId: dataObj[fileConfig.map.itemId ?? "NA"],
-			gtin: dataObj[fileConfig.map.gtin ?? "NA"],
-			mpn: dataObj[fileConfig.map.mpn ?? "NA"],
-			brand: dataObj[fileConfig.map.brand ?? "NA"],
-			name: dataObj[fileConfig.map.name],
-			description: dataObj[fileConfig.map.description],
-			pdpLink: dataObj[fileConfig.map.pdpLink ?? "NA"],
-			tradePrice,
-			map: isNaN(map) ? undefined : map <= 0 ? undefined : map,
-			msrp: isNaN(msrp) ? undefined : msrp <= 0 ? undefined : msrp,
-			shippingPrice: isNaN(shippingPrice)
-				? undefined
-				: shippingPrice <= 0
-					? undefined
-					: shippingPrice,
-			unitPerBox: isNaN(unitPerBox) ? 1 : unitPerBox < 1 ? 1 : unitPerBox,
-			stockQty,
-			restockDate,
-			imageUrls,
-		};
-
-		return res;
-	});
+	const initialBaseProducts = processProductRows(contents, fileConfig, headers);
 
 	let sanitizedInitialBaseProducts = initialBaseProducts.filter(
 		(sanitizedInitialBaseProduct) => !!sanitizedInitialBaseProduct
 	);
 	if (sanitizedInitialBaseProducts.length < 1) return [];
 
+	const { filteredProducts, existingProducts } = await filterExistingProducts(
+		sanitizedInitialBaseProducts
+	);
+	sanitizedInitialBaseProducts = filteredProducts;
+	if (sanitizedInitialBaseProducts.length < 1) return [];
+
+	const [productMainImageDetectorAiResponses, productsMetricInfo] = await Promise.all([
+		Promise.all(
+			sanitizedInitialBaseProducts.map((initialBaseProduct) =>
+				productMainImageDetectorAi(initialBaseProduct.imageUrls, initialBaseProduct.name)
+			)
+		),
+		getProductsMetricInfo(fileConfig.headerLine, productDataLines),
+	]);
+
+	const initialBaseProductsWithMainImageUrlAndMetricInfo = processMainImageData(
+		productMainImageDetectorAiResponses,
+		sanitizedInitialBaseProducts,
+		productsMetricInfo
+	);
+
+	const finalInitialBaseProductsWithMainImageUrlAndMetricInfo = filterFinalProducts(
+		initialBaseProductsWithMainImageUrlAndMetricInfo
+	);
+
+	if (existingProducts.length < 1)
+		updateExistingProductPriceInfo(
+			finalInitialBaseProductsWithMainImageUrlAndMetricInfo,
+			existingProducts
+		);
+
+	return finalInitialBaseProductsWithMainImageUrlAndMetricInfo;
+}
+
+function createDataObject(row: string, headers: string[], fileConfig: FileConfig) {
+	const values = row.split(fileConfig.delimiter);
+	return Object.fromEntries(headers.map((h, i) => [h, values[i]]));
+}
+
+function parseNumericValues(dataObj: Record<string, string>, fileConfig: FileConfig) {
+	const map = fileConfig.map.map ? parseFloat(dataObj[fileConfig.map.map]) : NaN;
+	const msrp = fileConfig.map.msrp ? parseFloat(dataObj[fileConfig.map.msrp]) : NaN;
+	const shippingPrice = fileConfig.map.shippingPrice
+		? parseFloat(dataObj[fileConfig.map.shippingPrice])
+		: NaN;
+	const unitPerBox = parseInt(dataObj[fileConfig.map.unitPerBox ?? "1"]);
+	const stockQty = parseInt(dataObj[fileConfig.map.stockQty ?? "0"]);
+	const tradePrice = parseFloat(dataObj[fileConfig.map.tradePrice]);
+
+	return { map, msrp, shippingPrice, unitPerBox, stockQty, tradePrice };
+}
+
+function validateProductData(
+	stockQty: number,
+	restockDate: Date | undefined,
+	tradePrice: number,
+	sku: string
+): boolean {
+	if (!restockDate && stockQty < 1) return false;
+	if (!tradePrice) return false;
+	if (!sku) return false;
+	return true;
+}
+
+function sanitizeNumericValues(
+	map: number,
+	msrp: number,
+	shippingPrice: number,
+	unitPerBox: number
+) {
+	return {
+		map: isNaN(map) ? undefined : map <= 0 ? undefined : map,
+		msrp: isNaN(msrp) ? undefined : msrp <= 0 ? undefined : msrp,
+		shippingPrice: isNaN(shippingPrice)
+			? undefined
+			: shippingPrice <= 0
+				? undefined
+				: shippingPrice,
+		unitPerBox: isNaN(unitPerBox) ? 1 : unitPerBox < 1 ? 1 : unitPerBox,
+	};
+}
+
+function createBaseProduct(row: string, dataObj: Record<string, string>, fileConfig: FileConfig) {
+	const { map, msrp, shippingPrice, unitPerBox, stockQty, tradePrice } = parseNumericValues(
+		dataObj,
+		fileConfig
+	);
+
+	const restockDate = fileConfig.map.restockDate
+		? new Date(dataObj[fileConfig.map.restockDate])
+		: undefined;
+
+	const sku = dataObj[fileConfig.map.sku];
+
+	if (!validateProductData(stockQty, restockDate, tradePrice, sku)) {
+		return undefined;
+	}
+
+	const imageUrls = extractProductImageUrls(row);
+	const sanitizedValues = sanitizeNumericValues(map, msrp, shippingPrice, unitPerBox);
+
+	return {
+		line: row,
+		sku,
+		itemId: dataObj[fileConfig.map.itemId ?? "NA"],
+		gtin: dataObj[fileConfig.map.gtin ?? "NA"],
+		mpn: dataObj[fileConfig.map.mpn ?? "NA"],
+		brand: dataObj[fileConfig.map.brand ?? "NA"],
+		name: dataObj[fileConfig.map.name],
+		description: dataObj[fileConfig.map.description],
+		pdpLink: dataObj[fileConfig.map.pdpLink ?? "NA"],
+		tradePrice,
+		map: sanitizedValues.map,
+		msrp: sanitizedValues.msrp,
+		shippingPrice: sanitizedValues.shippingPrice,
+		unitPerBox: sanitizedValues.unitPerBox,
+		stockQty,
+		restockDate,
+		imageUrls,
+	};
+}
+
+function processProductRows(contents: string[], fileConfig: FileConfig, headers: string[]) {
+	return contents.map((row) => {
+		const dataObj = createDataObject(row, headers, fileConfig);
+		return createBaseProduct(row, dataObj, fileConfig);
+	});
+}
+
+async function filterExistingProducts(sanitizedInitialBaseProducts: any[]) {
 	const currentSkus = sanitizedInitialBaseProducts.map(
 		(sanitizedInitialBaseProduct) => sanitizedInitialBaseProduct.sku
 	);
@@ -158,68 +216,65 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 
 	const existingProducts = sanitizedInitialBaseProducts
 		.map((initialBaseProductWithMainImageUrlAndIsoCodeInfo) => {
-			const existingProduct = existingProductSkusResponse?.data?.find(
+			const existingProduct = existingProductSkusResponse?.find(
 				(existingProduct) =>
 					existingProduct?.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
 			);
-			if (!existingProduct) return;
-
+			if (!existingProduct) return undefined;
 			return existingProduct;
 		})
 		.filter((existingProduct) => existingProduct !== undefined);
 
-	sanitizedInitialBaseProducts = sanitizedInitialBaseProducts.filter(
+	const filteredProducts = sanitizedInitialBaseProducts.filter(
 		(initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
 			!existingProducts.some(
 				(existingProduct) =>
 					existingProduct.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
 			)
 	);
-	if (sanitizedInitialBaseProducts.length < 1) return [];
 
-	const [productMainImageDetectorAiResponses, productsIsoCodeInfo] = await Promise.all([
-		Promise.all(
-			sanitizedInitialBaseProducts.map((initialBaseProduct) =>
-				productMainImageDetectorAi(initialBaseProduct.imageUrls, initialBaseProduct.name)
-			)
-		),
-		getProductsIsoCodeInfo(fileConfig.headerLine, productDataLines),
-	]);
+	return { filteredProducts, existingProducts };
+}
 
-	const initialBaseProductsWithMainImageUrlAndIsoCodeInfo = sanitizedInitialBaseProducts.map(
-		(initialBaseProduct, index) => {
-			const mainImageHasSolidBackground =
-				!productMainImageDetectorAiResponses[index].data?.hasNoWhiteBackground &&
-				!productMainImageDetectorAiResponses[index].data?.fitsRejectCriteria;
+function processMainImageData(
+	productMainImageDetectorAiResponses: any[],
+	sanitizedInitialBaseProducts: any[],
+	productsMetricInfo: any[]
+) {
+	return sanitizedInitialBaseProducts.map((initialBaseProduct, index) => {
+		const mainImageHasSolidBackground =
+			!productMainImageDetectorAiResponses[index].data?.hasNoWhiteBackground &&
+			!productMainImageDetectorAiResponses[index].data?.fitsRejectCriteria;
 
-			const mainImageIndex = Number(
-				productMainImageDetectorAiResponses[index].data?.mainImageImageIndex ?? "0"
-			);
-
-			const mainImageUrl = initialBaseProduct.imageUrls[mainImageIndex];
-
-			return {
-				...initialBaseProduct,
-				mainImageUrl: mainImageHasSolidBackground ? mainImageUrl : undefined,
-				...(productsIsoCodeInfo[index] ?? {}),
-			};
-		}
-	);
-
-	const finalInitialBaseProductsWithMainImageUrlAndIsoCodeInfo =
-		initialBaseProductsWithMainImageUrlAndIsoCodeInfo.filter(
-			(initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
-				initialBaseProductWithMainImageUrlAndIsoCodeInfo.mainImageUrl !== undefined &&
-				initialBaseProductWithMainImageUrlAndIsoCodeInfo.currencyCode !== undefined
-		) as Omit<BaseProduct, "category">[];
-
-	if (existingProducts.length < 1)
-		updateExistingProductPriceInfo(
-			finalInitialBaseProductsWithMainImageUrlAndIsoCodeInfo,
-			existingProducts
+		const mainImageIndex = Number(
+			productMainImageDetectorAiResponses[index].data?.mainImageImageIndex ?? "0"
 		);
 
-	return finalInitialBaseProductsWithMainImageUrlAndIsoCodeInfo;
+		const mainImageUrl = initialBaseProduct.imageUrls[mainImageIndex];
+
+		const { currencyCode, dimensionInfo, weightInfo } = productsMetricInfo[index] ?? {};
+
+		const sanitizedDimensionInfo = getProductDimensionInfo(dimensionInfo);
+		const sanitizedWeightInfo = getProductWeightInfo(weightInfo);
+
+		return {
+			...initialBaseProduct,
+			mainImageUrl: mainImageHasSolidBackground ? mainImageUrl : undefined,
+			currencyCode,
+			...sanitizedDimensionInfo,
+			...sanitizedWeightInfo,
+		};
+	});
+}
+
+function filterFinalProducts(initialBaseProductsWithMainImageUrlAndMetricInfo: any[]) {
+	return initialBaseProductsWithMainImageUrlAndMetricInfo.filter(
+		(initialBaseProductWithMainImageUrlAndMetricInfo) =>
+			initialBaseProductWithMainImageUrlAndMetricInfo.mainImageUrl !== undefined &&
+			initialBaseProductWithMainImageUrlAndMetricInfo.currencyCode !== undefined &&
+			initialBaseProductWithMainImageUrlAndMetricInfo.dimension !== undefined &&
+			initialBaseProductWithMainImageUrlAndMetricInfo.weight !== undefined
+	) as Omit<BaseProduct, "category">[];
 }
 
 async function updateExistingProductPriceInfo(
@@ -231,13 +286,13 @@ async function updateExistingProductPriceInfo(
 			const existingProduct = existingProducts?.find(
 				(product) => product?.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
 			);
-			if (!existingProduct) return;
+			if (!existingProduct) return undefined;
 
 			const productCurrencyExists = existingProduct.prices.some(
 				(price) =>
 					price.currencyCode === initialBaseProductWithMainImageUrlAndIsoCodeInfo.currencyCode
 			);
-			if (productCurrencyExists) return;
+			if (productCurrencyExists) return undefined;
 
 			return {
 				existingProduct,
@@ -245,7 +300,7 @@ async function updateExistingProductPriceInfo(
 			};
 		})
 		.filter((existingProduct) => existingProduct !== undefined);
-	if (existingProductsToUpdate.length < 1) return;
+	if (existingProductsToUpdate.length < 1) return undefined;
 
 	const productsToUpdate = existingProductsToUpdate.map(({ existingProduct, currentProduct }) => {
 		const { price, ...otherProductComputedData } = getProductComputedData(currentProduct);
@@ -287,177 +342,136 @@ export function extractProductImageUrls(productLine: string) {
 	return [...new Set(urls)];
 }
 
-export async function getProductsIsoCodeInfo(headerLine: string, productDataLines: string[]) {
-	const productIsoCodeInfoResponses = await Promise.all(
+async function getProductsMetricInfo(headerLine: string, productDataLines: string[]) {
+	const productMetricInfoResponses = await Promise.all(
 		productDataLines.map((line) =>
-			productIsoCodeInfoGeneratorAi({
+			productMetricInfoGeneratorAi({
 				headerLine,
 				productDataLine: line,
 			})
 		)
 	);
 
-	const productsIsoCodeInfo = productIsoCodeInfoResponses.map((response) => response.data);
+	const productMetricInfo = productMetricInfoResponses.map((response) => response.data);
 
-	return productsIsoCodeInfo;
+	return productMetricInfo;
 }
 
-export async function getProductsDimensionInfo(headerLine: string, productDataLines: string[]) {
-	const productDimensionInfoResponses = await Promise.all(
-		productDataLines.map((line) =>
-			productDimensionInfoGeneratorAi({
-				headerLine,
-				productDataLine: line,
-			})
-		)
+function getProductDimensionInfo(dimensionInfo?: ProductDimensionInfo) {
+	if (!dimensionInfo)
+		return {
+			dimensionUnit: "in" as const,
+		};
+
+	const mainDimensionValuesInInches = conversion.convertDimensionsToInches(
+		{
+			width: dimensionInfo.width,
+			height: dimensionInfo.height,
+			depth: dimensionInfo.depth,
+		},
+		dimensionInfo.dimensionUnit
 	);
 
-	const productDimensionInfo = productDimensionInfoResponses
-		.map(
-			(response) =>
-				response.data ?? {
-					dimension: undefined,
-					width: null,
-					height: null,
-					depth: null,
-					shippingDimension: null,
-					shippingWidth: null,
-					shippingHeight: null,
-					shippingDepth: null,
-					dimensionUnit: "in" as ProductDataDimensionUnit,
-				}
-		)
-		.map((response) => {
-			// Main Dimensions
-			const mainDimensionValuesInInches = conversion.convertDimensionsToInches(
-				{
-					width: response.width,
-					height: response.height,
-					depth: response.depth,
-				},
-				response.dimensionUnit
-			);
-
-			const mainDimensionValuesInInchesArray: {
-				value: number;
-				label: "W" | "H" | "D";
-			}[] = [];
-			if (response.width)
-				mainDimensionValuesInInchesArray.push({
-					value: mainDimensionValuesInInches.width,
-					label: "W",
-				});
-			if (response.depth)
-				mainDimensionValuesInInchesArray.push({
-					value: mainDimensionValuesInInches.depth,
-					label: "D",
-				});
-			if (response.height)
-				mainDimensionValuesInInchesArray.push({
-					value: mainDimensionValuesInInches.height,
-					label: "H",
-				});
-
-			const mainDimensionStringFormat =
-				mainDimensionValuesInInchesArray.length > 0
-					? mainDimensionValuesInInchesArray
-							.map((dimension) => `${dimension.value}"${dimension.label}`)
-							.join(" x ")
-					: null;
-
-			// Shipping Dimensions
-			const shippingDimensionValuesInInches = conversion.convertDimensionsToInches(
-				{
-					width: response.shippingWidth ?? response.width,
-					height: response.shippingHeight ?? response.height,
-					depth: response.shippingDepth ?? response.depth,
-				},
-				response.dimensionUnit
-			);
-
-			const shippingDimensionValuesInInchesArray: {
-				value: number;
-				label: "W" | "H" | "D";
-			}[] = [];
-			if (shippingDimensionValuesInInches.width !== 0)
-				shippingDimensionValuesInInchesArray.push({
-					value: shippingDimensionValuesInInches.width,
-					label: "W",
-				});
-			if (shippingDimensionValuesInInches.depth !== 0)
-				shippingDimensionValuesInInchesArray.push({
-					value: shippingDimensionValuesInInches.depth,
-					label: "D",
-				});
-			if (shippingDimensionValuesInInches.height !== 0)
-				shippingDimensionValuesInInchesArray.push({
-					value: shippingDimensionValuesInInches.height,
-					label: "H",
-				});
-
-			const shippingDimensionStringFormat =
-				shippingDimensionValuesInInchesArray.length > 0
-					? shippingDimensionValuesInInchesArray
-							.map((dimension) => `${dimension.value}"${dimension.label}`)
-							.join(" x ")
-					: null;
-
-			return {
-				dimension: mainDimensionStringFormat,
-				width: mainDimensionValuesInInches.width,
-				height: mainDimensionValuesInInches.height,
-				depth: mainDimensionValuesInInches.depth,
-				shippingDimension: shippingDimensionStringFormat,
-				shippingWidth: shippingDimensionValuesInInches.width,
-				shippingHeight: shippingDimensionValuesInInches.height,
-				shippingDepth: shippingDimensionValuesInInches.depth,
-				dimensionUnit: "in",
-			} as ProductDimensionInfo;
+	const mainDimensionValuesInInchesArray: {
+		value: number;
+		label: "W" | "H" | "D";
+	}[] = [];
+	if (dimensionInfo.width)
+		mainDimensionValuesInInchesArray.push({
+			value: mainDimensionValuesInInches.width,
+			label: "W",
+		});
+	if (dimensionInfo.depth)
+		mainDimensionValuesInInchesArray.push({
+			value: mainDimensionValuesInInches.depth,
+			label: "D",
+		});
+	if (dimensionInfo.height)
+		mainDimensionValuesInInchesArray.push({
+			value: mainDimensionValuesInInches.height,
+			label: "H",
 		});
 
-	return productDimensionInfo;
+	const mainDimensionStringFormat =
+		mainDimensionValuesInInchesArray.length > 0
+			? mainDimensionValuesInInchesArray
+					.map((dimension) => `${dimension.value}"${dimension.label}`)
+					.join(" x ")
+			: null;
+
+	// Shipping Dimensions
+	const shippingDimensionValuesInInches = conversion.convertDimensionsToInches(
+		{
+			width: dimensionInfo.shippingWidth ?? dimensionInfo.width,
+			height: dimensionInfo.shippingHeight ?? dimensionInfo.height,
+			depth: dimensionInfo.shippingDepth ?? dimensionInfo.depth,
+		},
+		dimensionInfo.dimensionUnit
+	);
+
+	const shippingDimensionValuesInInchesArray: {
+		value: number;
+		label: "W" | "H" | "D";
+	}[] = [];
+	if (shippingDimensionValuesInInches.width !== 0)
+		shippingDimensionValuesInInchesArray.push({
+			value: shippingDimensionValuesInInches.width,
+			label: "W",
+		});
+	if (shippingDimensionValuesInInches.depth !== 0)
+		shippingDimensionValuesInInchesArray.push({
+			value: shippingDimensionValuesInInches.depth,
+			label: "D",
+		});
+	if (shippingDimensionValuesInInches.height !== 0)
+		shippingDimensionValuesInInchesArray.push({
+			value: shippingDimensionValuesInInches.height,
+			label: "H",
+		});
+
+	const shippingDimensionStringFormat =
+		shippingDimensionValuesInInchesArray.length > 0
+			? shippingDimensionValuesInInchesArray
+					.map((dimension) => `${dimension.value}"${dimension.label}`)
+					.join(" x ")
+			: null;
+
+	return {
+		dimension: mainDimensionStringFormat ?? undefined,
+		width: mainDimensionValuesInInches.width,
+		height: mainDimensionValuesInInches.height,
+		depth: mainDimensionValuesInInches.depth,
+		shippingDimension: shippingDimensionStringFormat ?? undefined,
+		shippingWidth: shippingDimensionValuesInInches.width,
+		shippingHeight: shippingDimensionValuesInInches.height,
+		shippingDepth: shippingDimensionValuesInInches.depth,
+		dimensionUnit: "in" as const,
+	};
 }
 
-export async function getProductsWeightInfo(headerLine: string, productDataLines: string[]) {
-	const productWeightInfoResponses = await Promise.all(
-		productDataLines.map((line) =>
-			productWeightInfoGeneratorAi({
-				headerLine,
-				productDataLine: line,
-			})
-		)
+function getProductWeightInfo(weightInfo?: ProductWeightInfo) {
+	if (!weightInfo)
+		return {
+			weightUnit: "lb" as const,
+		};
+
+	// Main Weight
+	const mainWeightValuesInLbs = conversion.convertWeightToLbs(
+		weightInfo.weight,
+		weightInfo.weightUnit
 	);
 
-	const productWeightInfo = productWeightInfoResponses
-		.map(
-			(response) =>
-				response.data ?? {
-					weight: null,
-					shippingWeight: null,
-					weightUnit: "lb" as ProductDataWeightUnit,
-				}
-		)
-		.map((response) => {
-			// Main Weight
-			const mainWeightValuesInLbs = conversion.convertWeightToLbs(
-				response.weight,
-				response.weightUnit
-			);
+	// Shipping Weight
+	const shippingWeightValuesInLbs = conversion.convertWeightToLbs(
+		weightInfo.shippingWeight ?? weightInfo.weight,
+		weightInfo.weightUnit
+	);
 
-			// Shipping Weight
-			const shippingWeightValuesInLbs = conversion.convertWeightToLbs(
-				response.shippingWeight ?? response.weight,
-				response.weightUnit
-			);
-
-			return {
-				weight: mainWeightValuesInLbs.weight,
-				shippingWeight: shippingWeightValuesInLbs.weight,
-				weightUnit: "lb",
-			} as ProductWeightInfo;
-		});
-
-	return productWeightInfo;
+	return {
+		weight: mainWeightValuesInLbs.weight,
+		shippingWeight: shippingWeightValuesInLbs.weight,
+		weightUnit: "lb" as const,
+	};
 }
 
 export async function getProductsStyleInfo(
@@ -497,16 +511,6 @@ export async function getProductsImageEmbedding(mainImageUrls: string[]) {
 
 	return productImageEmbeddingResponses.map((response) => ({
 		imageEmbedding: response.data,
-	}));
-}
-
-export async function getProductsTextEmbedding(texts: string[]) {
-	const productTextEmbeddingResponses = await Promise.all(
-		texts.map((text) => productTextEmbeddingGeneratorAi(text))
-	);
-
-	return productTextEmbeddingResponses.map((response) => ({
-		textEmbedding: response.data,
 	}));
 }
 

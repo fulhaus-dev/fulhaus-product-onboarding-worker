@@ -33,7 +33,7 @@ Your SOLE task is to provide the best name and description for a product that is
  - If product is for pets, do not assign a category.
  - If product is toys, do not assign a category.
  - If product is for flooring or wall tiles, do not assign a category.
- - If product is for special occasions, like Christmas, Easter, halloweens etc, do not assign a category.
+ - If product is for special occasions, like Christmas, Easter, Halloweens etc, do not assign a category.
 `;
 
 export default async function productInfoGeneratorAi(args: {

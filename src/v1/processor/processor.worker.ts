@@ -7,11 +7,8 @@ import type { FileConfig } from "@worker/v1/processor/processor.type.js";
 import {
 	getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo,
 	getProductComputedData,
-	getProductsDimensionInfo,
 	getProductsImageEmbedding,
 	getProductsStyleInfo,
-	getProductsTextEmbedding,
-	getProductsWeightInfo,
 } from "@worker/v1/processor/processor.util.js";
 import { productCategories } from "@worker/v1/product/product.constant.js";
 import {
@@ -147,9 +144,8 @@ async function processProductLines(
 	if (Object.keys(categoryCount).length === 0) {
 		const { data: categoryCountResponse } = await getAllProductCategoryStatisticService();
 
-		const productCategoryCount = categoryCountResponse?.data;
-		if (productCategoryCount) {
-			categoryCount = productCategoryCount.reduce((acc, count) => {
+		if (categoryCountResponse) {
+			categoryCount = categoryCountResponse.reduce((acc, count) => {
 				acc[count.category] = {
 					countUSD: count.countUSD,
 					countCAD: count.countCAD,
@@ -201,88 +197,48 @@ async function processProductLines(
 				(categoryCount[baseProduct.category]?.[`count${baseProduct.currencyCode}`] ?? 0) <=
 					env.MAX_CATEGORIES
 		) as BaseProduct[];
-	if (baseProducts.length < 1) return;
+	if (baseProducts.length < 1) return undefined;
 
-	const baseProductsLine = baseProducts.map((baseProduct) => baseProduct.line);
+	const [productsStyleInfo, productsImageEmbedding] = await Promise.all([
+		getProductsStyleInfo(
+			fileConfig.headerLine,
+			baseProducts.map((baseProduct) => ({
+				line: baseProduct.line,
+				mainImageUrl: baseProduct.mainImageUrl,
+			}))
+		),
+		getProductsImageEmbedding(baseProducts.map((baseProduct) => baseProduct.mainImageUrl)),
+	]);
 
-	const [productsDimensionInfo, productsWeightInfo, productsStyleInfo, productsImageEmbedding] =
-		await Promise.all([
-			getProductsDimensionInfo(fileConfig.headerLine, baseProductsLine),
-			getProductsWeightInfo(fileConfig.headerLine, baseProductsLine),
-			getProductsStyleInfo(
-				fileConfig.headerLine,
-				baseProducts.map((baseProduct) => ({
-					line: baseProduct.line,
-					mainImageUrl: baseProduct.mainImageUrl,
-				}))
-			),
-			getProductsImageEmbedding(baseProducts.map((baseProduct) => baseProduct.mainImageUrl)),
-		]);
-
-	const productsWithoutTextEmbedding = baseProducts.map((productWithoutTextEmbedding, index) => ({
-		...productWithoutTextEmbedding,
-		...productsDimensionInfo[index],
-		...productsWeightInfo[index],
+	const productsWithEmbedding = baseProducts.map((baseProduct, index) => ({
+		...baseProduct,
 		...productsStyleInfo[index],
 		...productsImageEmbedding[index],
 	}));
 
-	const productsTextEmbeddingParts = productsWithoutTextEmbedding.map(
-		(productWithoutTextEmbedding) => {
-			const textEmbeddingParts = [
-				`SKU: ${productWithoutTextEmbedding.sku}`,
-				`NAME: ${productWithoutTextEmbedding.name}`,
-				`DESCRIPTION: ${productWithoutTextEmbedding.description}`,
-			];
+	const productsWithUndefinedRequiredValues = productsWithEmbedding.map((productWithEmbedding) => {
+		if (!productWithEmbedding.imageEmbedding) return undefined;
+		if (!productWithEmbedding.currencyCode) return undefined;
+		if (!productWithEmbedding.dimension) return undefined;
 
-			if (productWithoutTextEmbedding.colorNames?.length > 0)
-				textEmbeddingParts.push(`COLORS: ${productWithoutTextEmbedding.colorNames.join(", ")}`);
+		const { price, ...otherProductComputedData } = getProductComputedData(productWithEmbedding);
 
-			if (productWithoutTextEmbedding.materials?.length > 0)
-				textEmbeddingParts.push(`MATERIALS: ${productWithoutTextEmbedding.materials.join(", ")}`);
-
-			if (productWithoutTextEmbedding.styles?.length > 0)
-				textEmbeddingParts.push(`STYLES: ${productWithoutTextEmbedding.styles.join(", ")}`);
-
-			return textEmbeddingParts.join("\n");
-		}
-	);
-
-	const productsTextEmbedding = await getProductsTextEmbedding(productsTextEmbeddingParts);
-
-	const productsWithUndefinedRequiredValues = productsWithoutTextEmbedding.map(
-		(productWithoutTextEmbedding, index) => {
-			if (!productsTextEmbedding[index]) return;
-			if (!productWithoutTextEmbedding.currencyCode) return;
-			if (!productWithoutTextEmbedding.dimension) return;
-
-			const warehouseCountryCodes = productWithoutTextEmbedding.warehouseCountryCodes ?? [];
-			const shippingCountryCodes = productWithoutTextEmbedding.shippingCountryCodes ?? [];
-
-			const { price, ...otherProductComputedData } = getProductComputedData(
-				productWithoutTextEmbedding
-			);
-
-			return {
-				...productWithoutTextEmbedding,
-				...productsTextEmbedding[index],
-				warehouseCountryCodes,
-				shippingCountryCodes,
-				vendorId: idArgs.vendorId,
-				ownerId: idArgs.ownerId,
-				fhSku: uid.generate(),
-				...otherProductComputedData,
-				prices: [price],
-				line: undefined,
-				currencyCode: productWithoutTextEmbedding.currencyCode,
-			};
-		}
-	) as ((ProductInfo & { currencyCode: ProductCurrencyCode }) | undefined)[];
+		return {
+			...productWithEmbedding,
+			vendorId: idArgs.vendorId,
+			ownerId: idArgs.ownerId,
+			fhSku: uid.generate(),
+			...otherProductComputedData,
+			prices: [price],
+			line: undefined,
+			currencyCode: productWithEmbedding.currencyCode,
+		};
+	}) as ((ProductInfo & { currencyCode: ProductCurrencyCode }) | undefined)[];
 
 	const products = productsWithUndefinedRequiredValues.filter(
 		(product) => product !== undefined
 	) as (ProductInfo & { currencyCode: ProductCurrencyCode })[];
-	if (products.length < 1) return;
+	if (products.length < 1) return undefined;
 
 	for (const product of products) {
 		const currentCategoryCount = categoryCount?.[product.category];
@@ -298,14 +254,12 @@ async function processProductLines(
 
 	const { data: response, errorRecord } = await createProductsService(
 		products.map((product) => {
-			const { imageEmbedding, textEmbedding, currencyCode, ...productData } = product;
+			const { imageEmbedding, ...productData } = product;
+			(productData as any).currencyCode = undefined;
 
 			return {
 				productData,
-				embeddingData: {
-					imageEmbedding,
-					textEmbedding,
-				},
+				imageEmbedding,
 			};
 		})
 	);
@@ -323,7 +277,7 @@ async function processProductLines(
 		});
 	}
 
-	const productsProcessed = response?.data.length ?? 0;
+	const productsProcessed = response?.length ?? 0;
 	totalProcessed += productsProcessed;
 
 	logger.info(`📦 Completed ${productsProcessed}. Total processed ${totalProcessed}`);

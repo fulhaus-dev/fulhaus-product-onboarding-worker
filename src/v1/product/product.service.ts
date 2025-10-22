@@ -3,29 +3,18 @@ import { convexHttpClient } from "@worker/config/convex/index.js";
 import { env } from "@worker/config/environment.js";
 import type { ProcessorErrorRecord } from "@worker/shared/shared.type.js";
 import { asyncTryCatch } from "@worker/utils/try-catch.js";
-import type {
-	CreateProduct,
-	Product,
-	ProductCategory,
-	UpdateProduct,
-} from "@worker/v1/product/product.type.js";
+import type { CreateProduct, UpdateProduct } from "@worker/v1/product/product.type.js";
 
 export async function getAllProductCategoryStatisticService() {
-	return await asyncTryCatch<{
-		data: {
-			category: ProductCategory;
-			countUSD: number;
-			countCAD: number;
-		}[];
-	}>(() =>
-		convexHttpClient.query(api.v1.product.statistics.query.getAllProductCategoryStatistic, {
+	return await asyncTryCatch(() =>
+		convexHttpClient.query(api.v1.product.statistics.query.getPoAllProductCategoryStatistic, {
 			poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
 		})
 	);
 }
 
 export async function getProductsBySkusService(skus: string[]) {
-	return await asyncTryCatch<{ data: Product[] }>(() =>
+	return await asyncTryCatch(() =>
 		convexHttpClient.query(api.v1.product.query.getPoProductsBySkus, {
 			poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
 			skus,
@@ -34,7 +23,7 @@ export async function getProductsBySkusService(skus: string[]) {
 }
 
 export async function createProductsService(data: CreateProduct[]) {
-	return await asyncTryCatch<{ data: Product["_id"][] }>(() =>
+	return await asyncTryCatch(() =>
 		convexHttpClient.mutation(api.v1.product.mutation.createPoProducts, {
 			poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
 			data,
@@ -53,7 +42,7 @@ export async function updateProductsByIdService(data: UpdateProduct[]) {
 
 export async function logProductErrorService(errorRecord: ProcessorErrorRecord) {
 	return await asyncTryCatch(() =>
-		convexHttpClient.mutation(api.v1.product.error.mutation.logProductError, {
+		convexHttpClient.mutation(api.v1.product.error.mutation.logPoProductError, {
 			poApiKey: env.CONVEX_PRODUCT_ONBOARDING_API_KEY,
 			data: errorRecord,
 		})

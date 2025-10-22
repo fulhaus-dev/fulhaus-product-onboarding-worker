@@ -6,5 +6,3 @@ const googleGemini = createGoogleGenerativeAI({
 });
 
 export const googleGemini2_5FlashLite = googleGemini("gemini-2.5-flash-lite-preview-09-2025");
-
-export const googleGeminiEmbed004 = googleGemini.textEmbeddingModel("text-embedding-004");

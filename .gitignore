@@ -1,7 +1,5 @@
 # Dependencies
 node_modules/
-dist/
-coverage/
 
 # Environment files
 .env
@@ -40,3 +38,8 @@ Thumbs.db
 
 # Local files
 local/
+
+# Generated files
+convex/_generated/
+dist/
+coverage/
