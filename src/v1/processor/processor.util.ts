@@ -1,23 +1,14 @@
 import conversion from "@worker/utils/conversion.js";
-import { error } from "@worker/utils/error.js";
-import { asyncTryCatch } from "@worker/utils/try-catch.js";
-import productDimensionInfoGeneratorAi from "@worker/v1/ai/ai.product-dimension-info-generator.js";
 import { productImageEmbeddingGeneratorAi } from "@worker/v1/ai/ai.product-image-embedding-generator.js";
-import productIsoCodeInfoGeneratorAi from "@worker/v1/ai/ai.product-iso-code-info-generator.js";
 import productMainImageDetectorAi from "@worker/v1/ai/ai.product-main-image-detector.js";
+import productMetricInfoGeneratorAi from "@worker/v1/ai/ai.product-metric-info-generator.js";
 import productStyleInfoGeneratorAi from "@worker/v1/ai/ai.product-style-info-generator.js";
-import { productTextEmbeddingGeneratorAi } from "@worker/v1/ai/ai.product-text-embedding-generator.js";
-import productWeightInfoGeneratorAi from "@worker/v1/ai/ai.product-weight-info-generator.js";
 import {
 	FLAT_FILE_EXTS_TO_PROCESS,
 	SPREADSHEET_FILE_EXTS_TO_PROCESS,
 	ZIP_FILE_EXTS_TO_PROCESS,
 } from "@worker/v1/processor/processor.constant.js";
-import type {
-	FileConfig,
-	ProductDataDimensionUnit,
-	ProductDataWeightUnit,
-} from "@worker/v1/processor/processor.type.js";
+import type { FileConfig } from "@worker/v1/processor/processor.type.js";
 import {
 	getProductsBySkusService,
 	logProductErrorService,
@@ -80,14 +71,17 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 
 	const { headers, contents } = getProductHeadersAndContents(validProductDataLines, fileConfig);
 
+	// OPTIMIZATION: Single pass to create initial products - O(n)
 	const initialBaseProducts: (
 		| Omit<
 				BaseProduct,
 				| "mainImageUrl"
 				| "category"
 				| "currencyCode"
-				| "warehouseCountryCodes"
-				| "shippingCountryCodes"
+				| "dimension"
+				| "shippingDimension"
+				| "dimensionUnit"
+				| "weightUnit"
 		  >
 		| undefined
 	)[] = contents.map((row) => {
@@ -145,6 +139,7 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 		return res;
 	});
 
+	// OPTIMIZATION: Filter once - O(n)
 	let sanitizedInitialBaseProducts = initialBaseProducts.filter(
 		(sanitizedInitialBaseProduct) => !!sanitizedInitialBaseProduct
 	);
@@ -156,37 +151,45 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 
 	const { data: existingProductSkusResponse } = await getProductsBySkusService(currentSkus);
 
-	const existingProducts = sanitizedInitialBaseProducts
-		.map((initialBaseProductWithMainImageUrlAndIsoCodeInfo) => {
-			const existingProduct = existingProductSkusResponse?.data?.find(
-				(existingProduct) =>
-					existingProduct?.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
-			);
-			if (!existingProduct) return;
+	// OPTIMIZATION: Create Map for O(1) lookups instead of O(n) finds - O(n) space, O(1) lookup
+	const existingProductsBySkuMap = new Map<string, Product>();
+	if (existingProductSkusResponse?.products) {
+		for (const product of existingProductSkusResponse.products) {
+			if (product?.sku) {
+				existingProductsBySkuMap.set(product.sku, product);
+			}
+		}
+	}
 
-			return existingProduct;
-		})
-		.filter((existingProduct) => existingProduct !== undefined);
+	// OPTIMIZATION: Single pass to extract existing products and filter - O(n)
+	const existingProducts: Product[] = [];
+	const newProducts = [];
 
-	sanitizedInitialBaseProducts = sanitizedInitialBaseProducts.filter(
-		(initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
-			!existingProducts.some(
-				(existingProduct) =>
-					existingProduct.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
-			)
-	);
+	for (const initialBaseProduct of sanitizedInitialBaseProducts) {
+		const existingProduct = existingProductsBySkuMap.get(initialBaseProduct.sku);
+
+		if (existingProduct) {
+			existingProducts.push(existingProduct);
+		} else {
+			newProducts.push(initialBaseProduct);
+		}
+	}
+
+	sanitizedInitialBaseProducts = newProducts;
 	if (sanitizedInitialBaseProducts.length < 1) return [];
 
-	const [productMainImageDetectorAiResponses, productsIsoCodeInfo] = await Promise.all([
+	// Parallel execution of AI calls - maintain existing behavior
+	const [productMainImageDetectorAiResponses, productsMetricInfo] = await Promise.all([
 		Promise.all(
 			sanitizedInitialBaseProducts.map((initialBaseProduct) =>
 				productMainImageDetectorAi(initialBaseProduct.imageUrls, initialBaseProduct.name)
 			)
 		),
-		getProductsIsoCodeInfo(fileConfig.headerLine, productDataLines),
+		getProductsMetricInfo(fileConfig.headerLine, productDataLines),
 	]);
 
-	const initialBaseProductsWithMainImageUrlAndIsoCodeInfo = sanitizedInitialBaseProducts.map(
+	// OPTIMIZATION: Single pass to combine data - O(n)
+	const initialBaseProductsWithMainImageUrlAndMetricInfo = sanitizedInitialBaseProducts.map(
 		(initialBaseProduct, index) => {
 			const mainImageHasSolidBackground =
 				!productMainImageDetectorAiResponses[index].data?.hasNoWhiteBackground &&
@@ -198,55 +201,77 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 
 			const mainImageUrl = initialBaseProduct.imageUrls[mainImageIndex];
 
+			const { currencyCode, dimensionInfo, weightInfo } = productsMetricInfo[index] ?? {};
+
+			const sanitizedDimensionInfo = getProductDimensionInfo(dimensionInfo);
+			const sanitizedWeightInfo = getProductWeightInfo(weightInfo);
+
 			return {
 				...initialBaseProduct,
 				mainImageUrl: mainImageHasSolidBackground ? mainImageUrl : undefined,
-				...(productsIsoCodeInfo[index] ?? {}),
+				currencyCode,
+				...sanitizedDimensionInfo,
+				...sanitizedWeightInfo,
 			};
 		}
 	);
 
-	const finalInitialBaseProductsWithMainImageUrlAndIsoCodeInfo =
-		initialBaseProductsWithMainImageUrlAndIsoCodeInfo.filter(
-			(initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
-				initialBaseProductWithMainImageUrlAndIsoCodeInfo.mainImageUrl !== undefined &&
-				initialBaseProductWithMainImageUrlAndIsoCodeInfo.currencyCode !== undefined
+	// Final filter - O(n)
+	const finalInitialBaseProductsWithMainImageUrlAndMetricInfo =
+		initialBaseProductsWithMainImageUrlAndMetricInfo.filter(
+			(initialBaseProductWithMainImageUrlAndMetricInfo) =>
+				initialBaseProductWithMainImageUrlAndMetricInfo.mainImageUrl !== undefined &&
+				initialBaseProductWithMainImageUrlAndMetricInfo.currencyCode !== undefined &&
+				initialBaseProductWithMainImageUrlAndMetricInfo.dimension !== undefined &&
+				initialBaseProductWithMainImageUrlAndMetricInfo.weight !== undefined
 		) as Omit<BaseProduct, "category">[];
 
-	if (existingProducts.length < 1)
-		updateExistingProductPriceInfo(
-			finalInitialBaseProductsWithMainImageUrlAndIsoCodeInfo,
+	// Bug fix: Changed < to > to correctly check if there are existing products
+	if (existingProducts.length > 0) {
+		await updateExistingProductPriceInfo(
+			finalInitialBaseProductsWithMainImageUrlAndMetricInfo,
 			existingProducts
 		);
+	}
 
-	return finalInitialBaseProductsWithMainImageUrlAndIsoCodeInfo;
+	return finalInitialBaseProductsWithMainImageUrlAndMetricInfo;
 }
 
 async function updateExistingProductPriceInfo(
 	initialBaseProductsWithMainImageUrlAndIsoCodeInfo: Omit<BaseProduct, "category">[],
 	existingProducts: Product[]
 ) {
-	const existingProductsToUpdate = initialBaseProductsWithMainImageUrlAndIsoCodeInfo
-		.map((initialBaseProductWithMainImageUrlAndIsoCodeInfo) => {
-			const existingProduct = existingProducts?.find(
-				(product) => product?.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
-			);
-			if (!existingProduct) return;
+	// OPTIMIZATION: Create Map for O(1) lookups - O(n) space, O(1) lookup
+	const existingProductsBySku = new Map<string, Product>();
+	for (const product of existingProducts) {
+		if (product?.sku) {
+			existingProductsBySku.set(product.sku, product);
+		}
+	}
 
-			const productCurrencyExists = existingProduct.prices.some(
-				(price) =>
-					price.currencyCode === initialBaseProductWithMainImageUrlAndIsoCodeInfo.currencyCode
-			);
-			if (productCurrencyExists) return;
+	// OPTIMIZATION: Single pass with Map lookup instead of nested find - O(n) instead of O(n²)
+	const existingProductsToUpdate = [];
 
-			return {
-				existingProduct,
-				currentProduct: initialBaseProductWithMainImageUrlAndIsoCodeInfo,
-			};
-		})
-		.filter((existingProduct) => existingProduct !== undefined);
+	for (const initialBaseProduct of initialBaseProductsWithMainImageUrlAndIsoCodeInfo) {
+		const existingProduct = existingProductsBySku.get(initialBaseProduct.sku);
+
+		if (!existingProduct) continue;
+
+		const productCurrencyExists = existingProduct.prices.some(
+			(price) => price.currencyCode === initialBaseProduct.currencyCode
+		);
+
+		if (productCurrencyExists) continue;
+
+		existingProductsToUpdate.push({
+			existingProduct,
+			currentProduct: initialBaseProduct,
+		});
+	}
+
 	if (existingProductsToUpdate.length < 1) return;
 
+	// Single pass to create updates - O(n)
 	const productsToUpdate = existingProductsToUpdate.map(({ existingProduct, currentProduct }) => {
 		const { price, ...otherProductComputedData } = getProductComputedData(currentProduct);
 
@@ -287,177 +312,136 @@ export function extractProductImageUrls(productLine: string) {
 	return [...new Set(urls)];
 }
 
-export async function getProductsIsoCodeInfo(headerLine: string, productDataLines: string[]) {
-	const productIsoCodeInfoResponses = await Promise.all(
+async function getProductsMetricInfo(headerLine: string, productDataLines: string[]) {
+	const productMetricInfoResponses = await Promise.all(
 		productDataLines.map((line) =>
-			productIsoCodeInfoGeneratorAi({
+			productMetricInfoGeneratorAi({
 				headerLine,
 				productDataLine: line,
 			})
 		)
 	);
 
-	const productsIsoCodeInfo = productIsoCodeInfoResponses.map((response) => response.data);
+	const productMetricInfo = productMetricInfoResponses.map((response) => response.data);
 
-	return productsIsoCodeInfo;
+	return productMetricInfo;
 }
 
-export async function getProductsDimensionInfo(headerLine: string, productDataLines: string[]) {
-	const productDimensionInfoResponses = await Promise.all(
-		productDataLines.map((line) =>
-			productDimensionInfoGeneratorAi({
-				headerLine,
-				productDataLine: line,
-			})
-		)
+function getProductDimensionInfo(dimensionInfo?: ProductDimensionInfo) {
+	if (!dimensionInfo)
+		return {
+			dimensionUnit: "in" as const,
+		};
+
+	const mainDimensionValuesInInches = conversion.convertDimensionsToInches(
+		{
+			width: dimensionInfo.width,
+			height: dimensionInfo.height,
+			depth: dimensionInfo.depth,
+		},
+		dimensionInfo.dimensionUnit
 	);
 
-	const productDimensionInfo = productDimensionInfoResponses
-		.map(
-			(response) =>
-				response.data ?? {
-					dimension: undefined,
-					width: null,
-					height: null,
-					depth: null,
-					shippingDimension: null,
-					shippingWidth: null,
-					shippingHeight: null,
-					shippingDepth: null,
-					dimensionUnit: "in" as ProductDataDimensionUnit,
-				}
-		)
-		.map((response) => {
-			// Main Dimensions
-			const mainDimensionValuesInInches = conversion.convertDimensionsToInches(
-				{
-					width: response.width,
-					height: response.height,
-					depth: response.depth,
-				},
-				response.dimensionUnit
-			);
-
-			const mainDimensionValuesInInchesArray: {
-				value: number;
-				label: "W" | "H" | "D";
-			}[] = [];
-			if (response.width)
-				mainDimensionValuesInInchesArray.push({
-					value: mainDimensionValuesInInches.width,
-					label: "W",
-				});
-			if (response.depth)
-				mainDimensionValuesInInchesArray.push({
-					value: mainDimensionValuesInInches.depth,
-					label: "D",
-				});
-			if (response.height)
-				mainDimensionValuesInInchesArray.push({
-					value: mainDimensionValuesInInches.height,
-					label: "H",
-				});
-
-			const mainDimensionStringFormat =
-				mainDimensionValuesInInchesArray.length > 0
-					? mainDimensionValuesInInchesArray
-							.map((dimension) => `${dimension.value}"${dimension.label}`)
-							.join(" x ")
-					: null;
-
-			// Shipping Dimensions
-			const shippingDimensionValuesInInches = conversion.convertDimensionsToInches(
-				{
-					width: response.shippingWidth ?? response.width,
-					height: response.shippingHeight ?? response.height,
-					depth: response.shippingDepth ?? response.depth,
-				},
-				response.dimensionUnit
-			);
-
-			const shippingDimensionValuesInInchesArray: {
-				value: number;
-				label: "W" | "H" | "D";
-			}[] = [];
-			if (shippingDimensionValuesInInches.width !== 0)
-				shippingDimensionValuesInInchesArray.push({
-					value: shippingDimensionValuesInInches.width,
-					label: "W",
-				});
-			if (shippingDimensionValuesInInches.depth !== 0)
-				shippingDimensionValuesInInchesArray.push({
-					value: shippingDimensionValuesInInches.depth,
-					label: "D",
-				});
-			if (shippingDimensionValuesInInches.height !== 0)
-				shippingDimensionValuesInInchesArray.push({
-					value: shippingDimensionValuesInInches.height,
-					label: "H",
-				});
-
-			const shippingDimensionStringFormat =
-				shippingDimensionValuesInInchesArray.length > 0
-					? shippingDimensionValuesInInchesArray
-							.map((dimension) => `${dimension.value}"${dimension.label}`)
-							.join(" x ")
-					: null;
-
-			return {
-				dimension: mainDimensionStringFormat,
-				width: mainDimensionValuesInInches.width,
-				height: mainDimensionValuesInInches.height,
-				depth: mainDimensionValuesInInches.depth,
-				shippingDimension: shippingDimensionStringFormat,
-				shippingWidth: shippingDimensionValuesInInches.width,
-				shippingHeight: shippingDimensionValuesInInches.height,
-				shippingDepth: shippingDimensionValuesInInches.depth,
-				dimensionUnit: "in",
-			} as ProductDimensionInfo;
+	const mainDimensionValuesInInchesArray: {
+		value: number;
+		label: "W" | "H" | "D";
+	}[] = [];
+	if (dimensionInfo.width)
+		mainDimensionValuesInInchesArray.push({
+			value: mainDimensionValuesInInches.width,
+			label: "W",
+		});
+	if (dimensionInfo.depth)
+		mainDimensionValuesInInchesArray.push({
+			value: mainDimensionValuesInInches.depth,
+			label: "D",
+		});
+	if (dimensionInfo.height)
+		mainDimensionValuesInInchesArray.push({
+			value: mainDimensionValuesInInches.height,
+			label: "H",
 		});
 
-	return productDimensionInfo;
+	const mainDimensionStringFormat =
+		mainDimensionValuesInInchesArray.length > 0
+			? mainDimensionValuesInInchesArray
+					.map((dimension) => `${dimension.value}"${dimension.label}`)
+					.join(" x ")
+			: null;
+
+	// Shipping Dimensions
+	const shippingDimensionValuesInInches = conversion.convertDimensionsToInches(
+		{
+			width: dimensionInfo.shippingWidth ?? dimensionInfo.width,
+			height: dimensionInfo.shippingHeight ?? dimensionInfo.height,
+			depth: dimensionInfo.shippingDepth ?? dimensionInfo.depth,
+		},
+		dimensionInfo.dimensionUnit
+	);
+
+	const shippingDimensionValuesInInchesArray: {
+		value: number;
+		label: "W" | "H" | "D";
+	}[] = [];
+	if (shippingDimensionValuesInInches.width !== 0)
+		shippingDimensionValuesInInchesArray.push({
+			value: shippingDimensionValuesInInches.width,
+			label: "W",
+		});
+	if (shippingDimensionValuesInInches.depth !== 0)
+		shippingDimensionValuesInInchesArray.push({
+			value: shippingDimensionValuesInInches.depth,
+			label: "D",
+		});
+	if (shippingDimensionValuesInInches.height !== 0)
+		shippingDimensionValuesInInchesArray.push({
+			value: shippingDimensionValuesInInches.height,
+			label: "H",
+		});
+
+	const shippingDimensionStringFormat =
+		shippingDimensionValuesInInchesArray.length > 0
+			? shippingDimensionValuesInInchesArray
+					.map((dimension) => `${dimension.value}"${dimension.label}`)
+					.join(" x ")
+			: null;
+
+	return {
+		dimension: mainDimensionStringFormat ?? undefined,
+		width: mainDimensionValuesInInches.width,
+		height: mainDimensionValuesInInches.height,
+		depth: mainDimensionValuesInInches.depth,
+		shippingDimension: shippingDimensionStringFormat ?? undefined,
+		shippingWidth: shippingDimensionValuesInInches.width,
+		shippingHeight: shippingDimensionValuesInInches.height,
+		shippingDepth: shippingDimensionValuesInInches.depth,
+		dimensionUnit: "in" as const,
+	};
 }
 
-export async function getProductsWeightInfo(headerLine: string, productDataLines: string[]) {
-	const productWeightInfoResponses = await Promise.all(
-		productDataLines.map((line) =>
-			productWeightInfoGeneratorAi({
-				headerLine,
-				productDataLine: line,
-			})
-		)
+function getProductWeightInfo(weightInfo?: ProductWeightInfo) {
+	if (!weightInfo)
+		return {
+			weightUnit: "lb" as const,
+		};
+
+	// Main Weight
+	const mainWeightValuesInLbs = conversion.convertWeightToLbs(
+		weightInfo.weight,
+		weightInfo.weightUnit
 	);
 
-	const productWeightInfo = productWeightInfoResponses
-		.map(
-			(response) =>
-				response.data ?? {
-					weight: null,
-					shippingWeight: null,
-					weightUnit: "lb" as ProductDataWeightUnit,
-				}
-		)
-		.map((response) => {
-			// Main Weight
-			const mainWeightValuesInLbs = conversion.convertWeightToLbs(
-				response.weight,
-				response.weightUnit
-			);
+	// Shipping Weight
+	const shippingWeightValuesInLbs = conversion.convertWeightToLbs(
+		weightInfo.shippingWeight ?? weightInfo.weight,
+		weightInfo.weightUnit
+	);
 
-			// Shipping Weight
-			const shippingWeightValuesInLbs = conversion.convertWeightToLbs(
-				response.shippingWeight ?? response.weight,
-				response.weightUnit
-			);
-
-			return {
-				weight: mainWeightValuesInLbs.weight,
-				shippingWeight: shippingWeightValuesInLbs.weight,
-				weightUnit: "lb",
-			} as ProductWeightInfo;
-		});
-
-	return productWeightInfo;
+	return {
+		weight: mainWeightValuesInLbs.weight,
+		shippingWeight: shippingWeightValuesInLbs.weight,
+		weightUnit: "lb" as const,
+	};
 }
 
 export async function getProductsStyleInfo(
@@ -497,16 +481,6 @@ export async function getProductsImageEmbedding(mainImageUrls: string[]) {
 
 	return productImageEmbeddingResponses.map((response) => ({
 		imageEmbedding: response.data,
-	}));
-}
-
-export async function getProductsTextEmbedding(texts: string[]) {
-	const productTextEmbeddingResponses = await Promise.all(
-		texts.map((text) => productTextEmbeddingGeneratorAi(text))
-	);
-
-	return productTextEmbeddingResponses.map((response) => ({
-		textEmbedding: response.data,
 	}));
 }
 

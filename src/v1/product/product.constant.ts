@@ -1,3 +1,8 @@
+export const productCurrencyCodes = ["USD", "CAD"] as const;
+
+export const productDataDimensionUnits = ["in", "cm", "ft", "m", "yd", "mm"] as const;
+export const productDataWeightUnits = ["lb", "kg", "g", "oz", "mg"] as const;
+
 export const productCategories = [
 	"Arm Chair",
 	"Artwork",

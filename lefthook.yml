@@ -3,23 +3,23 @@
 
 # Defines hooks that run before a commit is created.
 # `parallel: true` allows commands to run simultaneously for speed.
-# pre-commit:
-#   parallel: true
-#   commands:
-#     # Formats code using Biome.
-#     # It only runs on staged files with specific extensions.
-#     format:
-#       glob: '*.{js,ts,json,jsonc}'
-#       run: npx @biomejs/biome format --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
-#       stage_fixed: true # Automatically stages any files fixed by the command.
+pre-commit:
+  parallel: true
+  commands:
+    # Formats code using Biome.
+    # It only runs on staged files with specific extensions.
+    format:
+      glob: '*.{js,ts,json,jsonc}'
+      run: npx @biomejs/biome format --write --diagnostic-level=error  --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true # Automatically stages any files fixed by the command.
 
-#     # Lints code and applies safe fixes (including organizing imports) using Biome.
-#     # The `check --write` command handles linting, fixing, and import sorting.
-#     # It runs on staged JS/TS files.
-#     lint-and-organize:
-#       glob: '*.{js,ts}'
-#       run: npx @biomejs/biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
-#       stage_fixed: true # Automatically stages any files fixed by the command.
+    # Lints code and applies safe fixes (including organizing imports) using Biome.
+    # The `check --write` command handles linting, fixing, and import sorting.
+    # It runs on staged JS/TS files.
+    lint-and-organize:
+      glob: '*.{js,ts}'
+      run: npx @biomejs/biome check --write --diagnostic-level=error --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true # Automatically stages any files fixed by the command.
 
 # Defines hooks that run before you push to a remote repository.
 pre-push:
@@ -37,7 +37,7 @@ pre-push:
 
     # Runs Biome's full check suite on the entire project as a final quality gate.
     check:
-      run: npx @biomejs/biome check --no-errors-on-unmatched --files-ignore-unknown=true .
+      run: npx @biomejs/biome check --diagnostic-level=error  --no-errors-on-unmatched --files-ignore-unknown=true .
 
     # Runs the type-checking script defined in your package.json (e.g., tsc or svelte-check).
     type-check:

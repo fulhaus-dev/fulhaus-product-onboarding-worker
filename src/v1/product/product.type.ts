@@ -1,13 +1,35 @@
 import type { PublicApiType } from "@worker/config/convex/convex.type.js";
-import type { ISO_3166 } from "@worker/shared/shared.constants/iso.3166.js";
-import type { ISO_4217 } from "@worker/shared/shared.constants/iso.4217.js";
-import type { productCategories, productStyles } from "@worker/v1/product/product.constant.js";
+import type {
+	productCategories,
+	productCurrencyCodes,
+	productDataDimensionUnits,
+	productDataWeightUnits,
+	productStyles,
+} from "@worker/v1/product/product.constant.js";
 import type { GenericId } from "convex/values";
 
 export type ProductCategory = (typeof productCategories)[number];
 export type ProductStyle = (typeof productStyles)[number];
-export type ProductCurrencyCode = (typeof ISO_4217)[number]["code"];
-export type ProductCountryCode = (typeof ISO_3166)[number]["alpha2"];
+export type ProductCurrencyCode = (typeof productCurrencyCodes)[number];
+
+export type ProductDataDimensionUnit = (typeof productDataDimensionUnits)[number];
+export type ProductDataWeightUnit = (typeof productDataWeightUnits)[number];
+
+export type ProductDimensionInfo = {
+	width?: number;
+	height?: number;
+	depth?: number;
+	shippingWidth?: number;
+	shippingHeight?: number;
+	shippingDepth?: number;
+	dimensionUnit: ProductDataDimensionUnit;
+};
+
+export type ProductWeightInfo = {
+	weight?: number;
+	shippingWeight?: number;
+	weightUnit: ProductDataWeightUnit;
+};
 
 export type BaseProduct = {
 	line: string;
@@ -29,34 +51,13 @@ export type BaseProduct = {
 	imageUrls: string[];
 	mainImageUrl: string;
 	category: ProductCategory;
-	warehouseCountryCodes: ProductCountryCode[];
-	shippingCountryCodes: ProductCountryCode[];
-	currencyCode: ProductCurrencyCode;
-};
-
-export type ProductIsoCodeInfo = {
-	warehouseCountryCodes: ProductCountryCode[];
-	shippingCountryCodes: ProductCountryCode[];
-	currencyCode: ProductCurrencyCode;
-};
-
-export type ProductDimensionInfo = {
 	dimension: string;
-	width: number;
-	height: number;
-	depth: number;
 	shippingDimension: string;
-	shippingWidth: number;
-	shippingHeight: number;
-	shippingDepth: number;
+	currencyCode: ProductCurrencyCode;
 	dimensionUnit: "in";
-};
-
-export type ProductWeightInfo = {
-	weight: number;
-	shippingWeight: number;
 	weightUnit: "lb";
-};
+} & Omit<ProductDimensionInfo, "dimensionUnit"> &
+	Omit<ProductWeightInfo, "weightUnit">;
 
 export type ProductStyleInfo = {
 	colorNames: string[];
@@ -79,4 +80,6 @@ export type ProductCategoryCountCurrency = Record<`count${ProductCurrencyCode}`,
 
 export type ProductCategoryCount = Record<ProductCategory, ProductCategoryCountCurrency>;
 
-export type ProductInfo = CreateProduct["productData"] & CreateProduct["embeddingData"];
+export type ProductInfo = CreateProduct["productData"] & {
+	imageEmbedding: CreateProduct["imageEmbedding"];
+};
