@@ -1,11 +1,10 @@
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { env } from '@worker/config/environment.js';
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { env } from "@worker/config/environment.js";
 
 const googleGemini = createGoogleGenerativeAI({
-  apiKey: env.GOOGLE_GEMINI_API_KEY,
+	apiKey: env.GOOGLE_GEMINI_API_KEY,
 });
 
-export const googleGemini2_5FlashLite = googleGemini('gemini-2.5-flash-lite');
+export const googleGemini2_5FlashLite = googleGemini("gemini-2.5-flash-lite-preview-09-2025");
 
-export const googleGeminiEmbed004 =
-  googleGemini.textEmbeddingModel('text-embedding-004');
+export const googleGeminiEmbed004 = googleGemini.textEmbeddingModel("text-embedding-004");
