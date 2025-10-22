@@ -71,114 +71,19 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 
 	const { headers, contents } = getProductHeadersAndContents(validProductDataLines, fileConfig);
 
-	// OPTIMIZATION: Single pass to create initial products - O(n)
-	const initialBaseProducts: (
-		| Omit<
-				BaseProduct,
-				| "mainImageUrl"
-				| "category"
-				| "currencyCode"
-				| "dimension"
-				| "shippingDimension"
-				| "dimensionUnit"
-				| "weightUnit"
-		  >
-		| undefined
-	)[] = contents.map((row) => {
-		const values = row.split(fileConfig.delimiter);
-		const dataObj = Object.fromEntries(headers.map((h, i) => [h, values[i]]));
+	const initialBaseProducts = processProductRows(contents, fileConfig, headers);
 
-		const map = fileConfig.map.map ? parseFloat(dataObj[fileConfig.map.map]) : NaN;
-
-		const msrp = fileConfig.map.msrp ? parseFloat(dataObj[fileConfig.map.msrp]) : NaN;
-
-		const shippingPrice = fileConfig.map.shippingPrice
-			? parseFloat(dataObj[fileConfig.map.shippingPrice])
-			: NaN;
-
-		const unitPerBox = parseInt(dataObj[fileConfig.map.unitPerBox ?? "1"]);
-
-		const imageUrls = extractProductImageUrls(row);
-
-		const stockQty = parseInt(dataObj[fileConfig.map.stockQty ?? "0"]);
-		const restockDate = fileConfig.map.restockDate
-			? new Date(dataObj[fileConfig.map.restockDate])
-			: undefined;
-		if (!restockDate && stockQty < 1) return undefined;
-
-		const tradePrice = parseFloat(dataObj[fileConfig.map.tradePrice]);
-		if (!tradePrice) return undefined;
-
-		const sku = dataObj[fileConfig.map.sku];
-		if (!sku) return undefined;
-
-		const res = {
-			line: row,
-			sku,
-			itemId: dataObj[fileConfig.map.itemId ?? "NA"],
-			gtin: dataObj[fileConfig.map.gtin ?? "NA"],
-			mpn: dataObj[fileConfig.map.mpn ?? "NA"],
-			brand: dataObj[fileConfig.map.brand ?? "NA"],
-			name: dataObj[fileConfig.map.name],
-			description: dataObj[fileConfig.map.description],
-			pdpLink: dataObj[fileConfig.map.pdpLink ?? "NA"],
-			tradePrice,
-			map: isNaN(map) ? undefined : map <= 0 ? undefined : map,
-			msrp: isNaN(msrp) ? undefined : msrp <= 0 ? undefined : msrp,
-			shippingPrice: isNaN(shippingPrice)
-				? undefined
-				: shippingPrice <= 0
-					? undefined
-					: shippingPrice,
-			unitPerBox: isNaN(unitPerBox) ? 1 : unitPerBox < 1 ? 1 : unitPerBox,
-			stockQty,
-			restockDate,
-			imageUrls,
-		};
-
-		return res;
-	});
-
-	// OPTIMIZATION: Filter once - O(n)
 	let sanitizedInitialBaseProducts = initialBaseProducts.filter(
 		(sanitizedInitialBaseProduct) => !!sanitizedInitialBaseProduct
 	);
 	if (sanitizedInitialBaseProducts.length < 1) return [];
 
-	const currentSkus = sanitizedInitialBaseProducts.map(
-		(sanitizedInitialBaseProduct) => sanitizedInitialBaseProduct.sku
+	const { filteredProducts, existingProducts } = await filterExistingProducts(
+		sanitizedInitialBaseProducts
 	);
-
-	const { data: existingProductSkusResponse } = await getProductsBySkusService(currentSkus);
-
-	// OPTIMIZATION: Create Map for O(1) lookups instead of O(n) finds - O(n) space, O(1) lookup
-	const existingProductsBySkuMap = new Map<string, Product>();
-	if (existingProductSkusResponse?.products) {
-		for (const product of existingProductSkusResponse.products) {
-			if (product?.sku) {
-				existingProductsBySkuMap.set(product.sku, product);
-			}
-		}
-	}
-
-	// OPTIMIZATION: Single pass to extract existing products and filter - O(n)
-	const existingProducts: Product[] = [];
-	const newProducts = [];
-
-	for (const initialBaseProduct of sanitizedInitialBaseProducts) {
-		const existingProduct = existingProductsBySkuMap.get(initialBaseProduct.sku);
-
-		if (existingProduct) {
-			existingProducts.push(existingProduct);
-		} else {
-			newProducts.push(initialBaseProduct);
-		}
-	}
-
-	sanitizedInitialBaseProducts = newProducts;
+	sanitizedInitialBaseProducts = filteredProducts;
 	if (sanitizedInitialBaseProducts.length < 1) return [];
 
-	// Parallel execution of AI calls - maintain existing behavior
 	const [productMainImageDetectorAiResponses, productsMetricInfo] = await Promise.all([
 		Promise.all(
 			sanitizedInitialBaseProducts.map((initialBaseProduct) =>
@@ -188,90 +93,215 @@ export async function getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
 		getProductsMetricInfo(fileConfig.headerLine, productDataLines),
 	]);
 
-	// OPTIMIZATION: Single pass to combine data - O(n)
-	const initialBaseProductsWithMainImageUrlAndMetricInfo = sanitizedInitialBaseProducts.map(
-		(initialBaseProduct, index) => {
-			const mainImageHasSolidBackground =
-				!productMainImageDetectorAiResponses[index].data?.hasNoWhiteBackground &&
-				!productMainImageDetectorAiResponses[index].data?.fitsRejectCriteria;
-
-			const mainImageIndex = Number(
-				productMainImageDetectorAiResponses[index].data?.mainImageImageIndex ?? "0"
-			);
-
-			const mainImageUrl = initialBaseProduct.imageUrls[mainImageIndex];
-
-			const { currencyCode, dimensionInfo, weightInfo } = productsMetricInfo[index] ?? {};
-
-			const sanitizedDimensionInfo = getProductDimensionInfo(dimensionInfo);
-			const sanitizedWeightInfo = getProductWeightInfo(weightInfo);
-
-			return {
-				...initialBaseProduct,
-				mainImageUrl: mainImageHasSolidBackground ? mainImageUrl : undefined,
-				currencyCode,
-				...sanitizedDimensionInfo,
-				...sanitizedWeightInfo,
-			};
-		}
+	const initialBaseProductsWithMainImageUrlAndMetricInfo = processMainImageData(
+		productMainImageDetectorAiResponses,
+		sanitizedInitialBaseProducts,
+		productsMetricInfo
 	);
 
-	// Final filter - O(n)
-	const finalInitialBaseProductsWithMainImageUrlAndMetricInfo =
-		initialBaseProductsWithMainImageUrlAndMetricInfo.filter(
-			(initialBaseProductWithMainImageUrlAndMetricInfo) =>
-				initialBaseProductWithMainImageUrlAndMetricInfo.mainImageUrl !== undefined &&
-				initialBaseProductWithMainImageUrlAndMetricInfo.currencyCode !== undefined &&
-				initialBaseProductWithMainImageUrlAndMetricInfo.dimension !== undefined &&
-				initialBaseProductWithMainImageUrlAndMetricInfo.weight !== undefined
-		) as Omit<BaseProduct, "category">[];
+	const finalInitialBaseProductsWithMainImageUrlAndMetricInfo = filterFinalProducts(
+		initialBaseProductsWithMainImageUrlAndMetricInfo
+	);
 
-	// Bug fix: Changed < to > to correctly check if there are existing products
-	if (existingProducts.length > 0) {
-		await updateExistingProductPriceInfo(
+	if (existingProducts.length < 1)
+		updateExistingProductPriceInfo(
 			finalInitialBaseProductsWithMainImageUrlAndMetricInfo,
 			existingProducts
 		);
-	}
 
 	return finalInitialBaseProductsWithMainImageUrlAndMetricInfo;
+}
+
+function createDataObject(row: string, headers: string[], fileConfig: FileConfig) {
+	const values = row.split(fileConfig.delimiter);
+	return Object.fromEntries(headers.map((h, i) => [h, values[i]]));
+}
+
+function parseNumericValues(dataObj: Record<string, string>, fileConfig: FileConfig) {
+	const map = fileConfig.map.map ? parseFloat(dataObj[fileConfig.map.map]) : NaN;
+	const msrp = fileConfig.map.msrp ? parseFloat(dataObj[fileConfig.map.msrp]) : NaN;
+	const shippingPrice = fileConfig.map.shippingPrice
+		? parseFloat(dataObj[fileConfig.map.shippingPrice])
+		: NaN;
+	const unitPerBox = parseInt(dataObj[fileConfig.map.unitPerBox ?? "1"]);
+	const stockQty = parseInt(dataObj[fileConfig.map.stockQty ?? "0"]);
+	const tradePrice = parseFloat(dataObj[fileConfig.map.tradePrice]);
+
+	return { map, msrp, shippingPrice, unitPerBox, stockQty, tradePrice };
+}
+
+function validateProductData(
+	stockQty: number,
+	restockDate: Date | undefined,
+	tradePrice: number,
+	sku: string
+): boolean {
+	if (!restockDate && stockQty < 1) return false;
+	if (!tradePrice) return false;
+	if (!sku) return false;
+	return true;
+}
+
+function sanitizeNumericValues(
+	map: number,
+	msrp: number,
+	shippingPrice: number,
+	unitPerBox: number
+) {
+	return {
+		map: isNaN(map) ? undefined : map <= 0 ? undefined : map,
+		msrp: isNaN(msrp) ? undefined : msrp <= 0 ? undefined : msrp,
+		shippingPrice: isNaN(shippingPrice)
+			? undefined
+			: shippingPrice <= 0
+				? undefined
+				: shippingPrice,
+		unitPerBox: isNaN(unitPerBox) ? 1 : unitPerBox < 1 ? 1 : unitPerBox,
+	};
+}
+
+function createBaseProduct(row: string, dataObj: Record<string, string>, fileConfig: FileConfig) {
+	const { map, msrp, shippingPrice, unitPerBox, stockQty, tradePrice } = parseNumericValues(
+		dataObj,
+		fileConfig
+	);
+
+	const restockDate = fileConfig.map.restockDate
+		? new Date(dataObj[fileConfig.map.restockDate])
+		: undefined;
+
+	const sku = dataObj[fileConfig.map.sku];
+
+	if (!validateProductData(stockQty, restockDate, tradePrice, sku)) {
+		return undefined;
+	}
+
+	const imageUrls = extractProductImageUrls(row);
+	const sanitizedValues = sanitizeNumericValues(map, msrp, shippingPrice, unitPerBox);
+
+	return {
+		line: row,
+		sku,
+		itemId: dataObj[fileConfig.map.itemId ?? "NA"],
+		gtin: dataObj[fileConfig.map.gtin ?? "NA"],
+		mpn: dataObj[fileConfig.map.mpn ?? "NA"],
+		brand: dataObj[fileConfig.map.brand ?? "NA"],
+		name: dataObj[fileConfig.map.name],
+		description: dataObj[fileConfig.map.description],
+		pdpLink: dataObj[fileConfig.map.pdpLink ?? "NA"],
+		tradePrice,
+		map: sanitizedValues.map,
+		msrp: sanitizedValues.msrp,
+		shippingPrice: sanitizedValues.shippingPrice,
+		unitPerBox: sanitizedValues.unitPerBox,
+		stockQty,
+		restockDate,
+		imageUrls,
+	};
+}
+
+function processProductRows(contents: string[], fileConfig: FileConfig, headers: string[]) {
+	return contents.map((row) => {
+		const dataObj = createDataObject(row, headers, fileConfig);
+		return createBaseProduct(row, dataObj, fileConfig);
+	});
+}
+
+async function filterExistingProducts(sanitizedInitialBaseProducts: any[]) {
+	const currentSkus = sanitizedInitialBaseProducts.map(
+		(sanitizedInitialBaseProduct) => sanitizedInitialBaseProduct.sku
+	);
+
+	const { data: existingProductSkusResponse } = await getProductsBySkusService(currentSkus);
+
+	const existingProducts = sanitizedInitialBaseProducts
+		.map((initialBaseProductWithMainImageUrlAndIsoCodeInfo) => {
+			const existingProduct = existingProductSkusResponse?.products?.find(
+				(existingProduct) =>
+					existingProduct?.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+			);
+			if (!existingProduct) return undefined;
+			return existingProduct;
+		})
+		.filter((existingProduct) => existingProduct !== undefined);
+
+	const filteredProducts = sanitizedInitialBaseProducts.filter(
+		(initialBaseProductWithMainImageUrlAndIsoCodeInfo) =>
+			!existingProducts.some(
+				(existingProduct) =>
+					existingProduct.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+			)
+	);
+
+	return { filteredProducts, existingProducts };
+}
+
+function processMainImageData(
+	productMainImageDetectorAiResponses: any[],
+	sanitizedInitialBaseProducts: any[],
+	productsMetricInfo: any[]
+) {
+	return sanitizedInitialBaseProducts.map((initialBaseProduct, index) => {
+		const mainImageHasSolidBackground =
+			!productMainImageDetectorAiResponses[index].data?.hasNoWhiteBackground &&
+			!productMainImageDetectorAiResponses[index].data?.fitsRejectCriteria;
+
+		const mainImageIndex = Number(
+			productMainImageDetectorAiResponses[index].data?.mainImageImageIndex ?? "0"
+		);
+
+		const mainImageUrl = initialBaseProduct.imageUrls[mainImageIndex];
+
+		const { currencyCode, dimensionInfo, weightInfo } = productsMetricInfo[index] ?? {};
+
+		const sanitizedDimensionInfo = getProductDimensionInfo(dimensionInfo);
+		const sanitizedWeightInfo = getProductWeightInfo(weightInfo);
+
+		return {
+			...initialBaseProduct,
+			mainImageUrl: mainImageHasSolidBackground ? mainImageUrl : undefined,
+			currencyCode,
+			...sanitizedDimensionInfo,
+			...sanitizedWeightInfo,
+		};
+	});
+}
+
+function filterFinalProducts(initialBaseProductsWithMainImageUrlAndMetricInfo: any[]) {
+	return initialBaseProductsWithMainImageUrlAndMetricInfo.filter(
+		(initialBaseProductWithMainImageUrlAndMetricInfo) =>
+			initialBaseProductWithMainImageUrlAndMetricInfo.mainImageUrl !== undefined &&
+			initialBaseProductWithMainImageUrlAndMetricInfo.currencyCode !== undefined &&
+			initialBaseProductWithMainImageUrlAndMetricInfo.dimension !== undefined &&
+			initialBaseProductWithMainImageUrlAndMetricInfo.weight !== undefined
+	) as Omit<BaseProduct, "category">[];
 }
 
 async function updateExistingProductPriceInfo(
 	initialBaseProductsWithMainImageUrlAndIsoCodeInfo: Omit<BaseProduct, "category">[],
 	existingProducts: Product[]
 ) {
-	// OPTIMIZATION: Create Map for O(1) lookups - O(n) space, O(1) lookup
-	const existingProductsBySku = new Map<string, Product>();
-	for (const product of existingProducts) {
-		if (product?.sku) {
-			existingProductsBySku.set(product.sku, product);
-		}
-	}
+	const existingProductsToUpdate = initialBaseProductsWithMainImageUrlAndIsoCodeInfo
+		.map((initialBaseProductWithMainImageUrlAndIsoCodeInfo) => {
+			const existingProduct = existingProducts?.find(
+				(product) => product?.sku === initialBaseProductWithMainImageUrlAndIsoCodeInfo.sku
+			);
+			if (!existingProduct) return undefined;
 
-	// OPTIMIZATION: Single pass with Map lookup instead of nested find - O(n) instead of O(n²)
-	const existingProductsToUpdate = [];
+			const productCurrencyExists = existingProduct.prices.some(
+				(price) =>
+					price.currencyCode === initialBaseProductWithMainImageUrlAndIsoCodeInfo.currencyCode
+			);
+			if (productCurrencyExists) return undefined;
 
-	for (const initialBaseProduct of initialBaseProductsWithMainImageUrlAndIsoCodeInfo) {
-		const existingProduct = existingProductsBySku.get(initialBaseProduct.sku);
+			return {
+				existingProduct,
+				currentProduct: initialBaseProductWithMainImageUrlAndIsoCodeInfo,
+			};
+		})
+		.filter((existingProduct) => existingProduct !== undefined);
+	if (existingProductsToUpdate.length < 1) return undefined;
 
-		if (!existingProduct) continue;
-
-		const productCurrencyExists = existingProduct.prices.some(
-			(price) => price.currencyCode === initialBaseProduct.currencyCode
-		);
-
-		if (productCurrencyExists) continue;
-
-		existingProductsToUpdate.push({
-			existingProduct,
-			currentProduct: initialBaseProduct,
-		});
-	}
-
-	if (existingProductsToUpdate.length < 1) return;
-
-	// Single pass to create updates - O(n)
 	const productsToUpdate = existingProductsToUpdate.map(({ existingProduct, currentProduct }) => {
 		const { price, ...otherProductComputedData } = getProductComputedData(currentProduct);
 
