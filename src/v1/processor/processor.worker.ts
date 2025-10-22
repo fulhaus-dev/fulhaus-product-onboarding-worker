@@ -1,5 +1,4 @@
 import { env } from '@worker/config/environment.js';
-import logger from '@worker/utils/logger.js';
 import uid from '@worker/utils/uid.js';
 import productInfoGeneratorAi from '@worker/v1/ai/ai.product-info-generator.js';
 import type { FileConfig } from '@worker/v1/processor/processor.type.js';
@@ -23,67 +22,9 @@ import type {
   ProductInfo,
 } from '@worker/v1/product/product.type.js';
 
-let totalProcessed = 0;
-let totalRemoved = 0;
 let categoryCount = {} as ProductCategoryCount;
 
 let queue: string[] = [];
-
-// class ProductLinesQueue {
-//   private queue: string[] = [];
-//   private isProcessing = false;
-//   private fileConfig: FileConfig | null = null;
-//   private idArgs: { vendorId: string; ownerId?: string } | null = null;
-
-//   // Add lines to the queue (called when new lines come in)
-//   addLines(
-//     lines: string[],
-//     fileConfig: FileConfig,
-//     idArgs: { vendorId: string; ownerId?: string }
-//   ) {
-//     this.queue.push(...lines);
-//     this.fileConfig = fileConfig;
-//     this.idArgs = idArgs;
-
-//     // Start processing if not already running
-//     if (!this.isProcessing) this.processQueue();
-//   }
-
-//   private async processQueue() {
-//     this.isProcessing = true;
-
-//     // for (const queue of this.queue){
-//     const batch = this.queue.splice(0, env.MAX_PROCESSING_BATCH);
-//     await processProductLines(batch, this.fileConfig!, this.idArgs!);
-//     // }
-//     // while (this.queue.length > 0) {
-//     //   // Take next 20 (or less) from queue
-//     //   const batch = this.queue.splice(0, env.MAX_PROCESSING_BATCH);
-
-//     //   // Process this batch and wait for completion
-//     //   await processProductLines(batch, this.fileConfig!, this.idArgs!);
-
-//     //   //   // Force cleanup
-//     //   //   if (global.gc) global.gc();
-
-//     //   //   // Add delay between batches to prevent 502 errors
-//     //   //   await new Promise((resolve) => setTimeout(resolve, 500)); // 0.5 second delay
-//     // }
-
-//     // if (this.queue.length < 1) this.isProcessing = false;
-//   }
-// }
-
-// // Create global queue instance
-// const productQueue = new ProductLinesQueue();
-
-// export default function processProductLinesWorker(
-//   productDataLines: string[],
-//   fileConfig: FileConfig,
-//   idArgs: { vendorId: string; ownerId?: string }
-// ) {
-//   productQueue.addLines(productDataLines, fileConfig, idArgs);
-// }
 
 export default function processProductLinesWorker(
   productDataLines: string[],
@@ -142,17 +83,6 @@ async function processProductLines(
     await getInitialBaseProductsWithMainImageUrlAndIsoCodeInfo(
       productDataLines,
       fileConfig
-    );
-
-  const removedCount =
-    productDataLines.length -
-    initialBaseProductsWithMainImageUrlAndIsoCodeInfo.length;
-
-  totalRemoved += removedCount;
-
-  if (removedCount > 0)
-    logger.info(
-      `📦 Removed ${removedCount} invalid products. Total removed: ${totalRemoved}`
     );
 
   if (initialBaseProductsWithMainImageUrlAndIsoCodeInfo.length < 1) return;
@@ -272,11 +202,4 @@ async function processProductLines(
       ],
     });
   }
-
-  const productsProcessed = response?.productIds?.length ?? 0;
-  totalProcessed += productsProcessed;
-
-  logger.info(
-    `📦 Completed ${productsProcessed}. Total processed ${totalProcessed}`
-  );
 }
