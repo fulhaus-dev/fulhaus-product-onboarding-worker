@@ -10,7 +10,7 @@ pre-commit:
     # It only runs on staged files with specific extensions.
     format:
       glob: '*.{js,ts,json,jsonc}'
-      run: npx @biomejs/biome format --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      run: npx @biomejs/biome format --write --diagnostic-level=error  --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
       stage_fixed: true # Automatically stages any files fixed by the command.
 
     # Lints code and applies safe fixes (including organizing imports) using Biome.
@@ -37,7 +37,7 @@ pre-push:
 
     # Runs Biome's full check suite on the entire project as a final quality gate.
     check:
-      run: npx @biomejs/biome check --no-errors-on-unmatched --files-ignore-unknown=true .
+      run: npx @biomejs/biome check --diagnostic-level=error  --no-errors-on-unmatched --files-ignore-unknown=true .
 
     # Runs the type-checking script defined in your package.json (e.g., tsc or svelte-check).
     type-check:
