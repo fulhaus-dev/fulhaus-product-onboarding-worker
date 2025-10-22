@@ -58,7 +58,7 @@ async function getAllFileKeysInVendorProductDataBucketFolder(folderName: string)
 	return fileKeys;
 }
 
-export async function getProductDataFileStream(fileKey: string) {
+async function getProductDataFileStream(fileKey: string) {
 	let errorRecord: ProcessorErrorRecord | null = null;
 
 	const { data: response, errorRecord: getProductDataFileStreamErrorRecord } = await asyncTryCatch(
@@ -87,8 +87,40 @@ export async function getProductDataFileStream(fileKey: string) {
 	return { data: response.Body as NodeJS.ReadableStream };
 }
 
+async function getWayfairBestsellerItemsGroupIds() {
+	let errorRecord: ProcessorErrorRecord | null = null;
+
+	const { data: response, errorRecord: getProductDataFileStreamErrorRecord } = await asyncTryCatch(
+		() =>
+			r2Client.send(
+				new GetObjectCommand({
+					Bucket: env.CLOUDFLARE_R2_VENDOR_PRODUCT_DATA_BUCKET_NAME,
+					Key: "wayfair/wayfair-bestseller-item-group-ids.txt",
+				})
+			)
+	);
+	if (getProductDataFileStreamErrorRecord) errorRecord = getProductDataFileStreamErrorRecord;
+	if (!getProductDataFileStreamErrorRecord && !response.Body)
+		errorRecord = {
+			message: "Response Body not found.",
+		};
+
+	if (errorRecord || !response) {
+		return {
+			errorRecord: errorRecord ?? {
+				message: "Response not found.",
+			},
+		};
+	}
+
+	const data = await response.Body?.transformToString();
+
+	return { data };
+}
+
 const r2 = {
 	getAllFileKeysInVendorProductDataBucketFolder,
 	getProductDataFileStream,
+	getWayfairBestsellerItemsGroupIds,
 };
 export default r2;

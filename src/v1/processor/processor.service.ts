@@ -19,6 +19,8 @@ export async function processVendorProductDataService(vendorProductDataR2FolderN
 		getVendorProductDataFileKeysThatCanBeProcessed(allProductFileKeys);
 
 	for (const flatFileKey of flatFileKeys) {
+		if (!allowedFiles.includes(flatFileKey)) continue;
+
 		const { data: flatFileStream } = await r2.getProductDataFileStream(flatFileKey);
 		if (!flatFileStream) continue;
 
@@ -30,6 +32,8 @@ export async function processVendorProductDataService(vendorProductDataR2FolderN
 	}
 
 	for (const spreadsheetFileKey of spreadsheetFileKeys) {
+		if (!allowedFiles.includes(spreadsheetFileKey)) continue;
+
 		const { data: spreadsheetFileStream } = await r2.getProductDataFileStream(spreadsheetFileKey);
 		if (!spreadsheetFileStream) continue;
 
