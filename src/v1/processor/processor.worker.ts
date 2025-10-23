@@ -1,4 +1,5 @@
 import { env } from '@worker/config/environment.js';
+import logger from '@worker/utils/logger.js';
 import uid from '@worker/utils/uid.js';
 import productInfoGeneratorAi from '@worker/v1/ai/ai.product-info-generator.js';
 import type { FileConfig } from '@worker/v1/processor/processor.type.js';
@@ -25,41 +26,74 @@ import type {
 let categoryCount = {} as ProductCategoryCount;
 
 let queue: string[] = [];
+let receivedProductsCount = 0;
+let startQueueingProductLines = false;
 
-export default function processProductLinesWorker(
-  productDataLines: string[],
-  fileConfig: FileConfig,
-  idArgs: { vendorId: string; ownerId?: string }
-) {
-  fileConfig = fileConfig;
-  idArgs = idArgs;
+export default function processProductLinesWorker(productDataLines: string[]) {
+  // Before queueing starts - count products
+  if (!startQueueingProductLines) {
+    receivedProductsCount += productDataLines.length;
 
-  queue.push(...productDataLines);
+    // Threshold not reached yet
+    if (receivedProductsCount <= env.PROCESSING_START_COUNT) return;
 
-  if (queue.length > env.MAX_PROCESSING_QUEUE_SIZE) {
-    queue.splice(env.MAX_PROCESSING_QUEUE_SIZE);
+    // Threshold just crossed - queue items after threshold
+    const productLinesToKeep =
+      receivedProductsCount - env.PROCESSING_START_COUNT;
+
+    for (let i = productLinesToKeep; i < productDataLines.length; i++) {
+      queue.push(productDataLines[i]);
+    }
+
+    startQueueingProductLines = true;
+  } else {
+    // After queueing started - push all items
+    for (let i = 0; i < productDataLines.length; i++) {
+      queue.push(productDataLines[i]);
+    }
   }
+
+  // Truncate to max size
+  if (queue.length > env.MAX_PROCESSING_QUEUE_SIZE)
+    queue.length = env.MAX_PROCESSING_QUEUE_SIZE;
+}
+
+export function getQueueSize() {
+  return queue.length;
 }
 
 function batchedQueue() {
-  const batches = [];
-  for (let i = 0; i < queue.length; i += env.MAX_PROCESSING_BATCH) {
-    batches.push(queue.slice(i, i + env.MAX_PROCESSING_BATCH));
+  if (queue.length === 0) return [];
+
+  const batchCount = Math.ceil(queue.length / env.MAX_PROCESSING_BATCH);
+  const batches: string[][] = new Array(batchCount);
+
+  for (let i = 0; i < batchCount; i++) {
+    const start = i * env.MAX_PROCESSING_BATCH;
+    const end = Math.min(start + env.MAX_PROCESSING_BATCH, queue.length);
+    batches[i] = queue.slice(start, end);
   }
 
   queue = [];
   return batches;
 }
 
-export async function doneLoadingProducts(
+export async function startProcessingProducts(
   fileConfig: FileConfig,
   idArgs: { vendorId: string; ownerId?: string }
 ) {
   const batches = batchedQueue();
 
+  // Calculate total once instead of flattening array
+  const totalProducts = batches.reduce((sum, batch) => sum + batch.length, 0);
+
   for (const batch of batches) {
     await processProductLines(batch, fileConfig, idArgs);
   }
+
+  logger.info(
+    `✅ Finished processing ${totalProducts} products for vendor ID - ${idArgs.vendorId}.}`
+  );
 }
 
 async function processProductLines(
