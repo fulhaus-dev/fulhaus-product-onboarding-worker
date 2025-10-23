@@ -1,3 +1,4 @@
+import { env } from '@worker/config/environment.js';
 import logger from '@worker/utils/logger.js';
 import productFileSimpleHeaderMapGeneratorAi from '@worker/v1/ai/ai.product-file-simple-header-map-generator.js';
 import { FileConfig } from '@worker/v1/processor/processor.type.js';
@@ -5,6 +6,7 @@ import processProductLinesWorker, {
   doneLoadingProducts,
 } from '@worker/v1/processor/processor.worker.js';
 import { logProductErrorService } from '@worker/v1/product/product.service.js';
+import { Readable } from 'stream';
 
 export default async function processFlatFileProductDataStream({
   flatFileStream,
@@ -12,7 +14,7 @@ export default async function processFlatFileProductDataStream({
   ownerId,
   fileName,
 }: {
-  flatFileStream: NodeJS.ReadableStream;
+  flatFileStream: Readable;
   vendorId: string;
   ownerId?: string;
   fileName: string;
@@ -76,6 +78,11 @@ export default async function processFlatFileProductDataStream({
     });
 
     totalCount += lines.length;
+
+    if (totalCount >= env.MAX_PROCESSING_QUEUE_SIZE) {
+      flatFileStream.destroy();
+      break;
+    }
   }
 
   if (buffer.trim() && fileConfig) {

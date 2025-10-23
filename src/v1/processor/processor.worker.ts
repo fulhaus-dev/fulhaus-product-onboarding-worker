@@ -35,6 +35,10 @@ export default function processProductLinesWorker(
   idArgs = idArgs;
 
   queue.push(...productDataLines);
+
+  if (queue.length > env.MAX_PROCESSING_QUEUE_SIZE) {
+    queue.splice(env.MAX_PROCESSING_QUEUE_SIZE);
+  }
 }
 
 function batchedQueue() {
